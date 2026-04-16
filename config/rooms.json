@@ -1,0 +1,158 @@
+[
+  {
+    "id": "c1c05fef-08b4-4c61-a717-a0e1d8af055f",
+    "name": "Lobby",
+    "disableMeeting": true,
+    "color": "#9e9e9e"
+  },
+  {
+    "id": "eea0c439-0fec-475b-af78-9d24e7f7bc59",
+    "name": "Kitchen",
+    "color": "#9e9e9e",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-kitchen-3c3d3d19"
+  },
+  {
+    "id": "5147c5a9-03c8-42c6-b351-a0e9c719e1b5",
+    "name": "War Room",
+    "color": "#9e9e9e",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-war-room-a35f68d3"
+  },
+  {
+    "id": "4468864c-10d8-4f0b-a942-d27e2bfdfcf9",
+    "name": "1:1 A",
+    "color": "#9e9e9e",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-1-1-a-03a1e020"
+  },
+  {
+    "id": "4feb5934-7a7c-4787-88e7-39d155d34c3b",
+    "name": "1:1 B",
+    "color": "#9e9e9e",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-1-1-b-2455e6ce"
+  },
+  {
+    "id": "da4fca90-a071-49e8-b776-dfc88fd50c60",
+    "name": "1:1 C",
+    "color": "#9e9e9e",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-1-1-c-813df892"
+  },
+  {
+    "id": "d1e90626-cba6-4fa8-9bc8-faee92a75edd",
+    "name": "Acropolis",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-acropolis-07518ea6"
+  },
+  {
+    "id": "97ee6512-ff95-46ad-9390-06e329a48cfd",
+    "name": "Aneris",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-aneris-ec801fd1"
+  },
+  {
+    "id": "47591906-d5ef-4879-a752-a437851fd9c9",
+    "name": "Coeus",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-coeus-0658e231"
+  },
+  {
+    "id": "ca154c8c-5e03-41bf-ba1e-fd1f8a57bc39",
+    "name": "DTIO",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-dtio-997502d4"
+  },
+  {
+    "id": "7544739c-515f-4a35-a8e1-36fdb3c503b9",
+    "name": "DyTO",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-dyto-c2720f5f"
+  },
+  {
+    "id": "6cf3cdb8-4275-42bf-a72a-460784480998",
+    "name": "Fine-Tuning",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-fine-tuning-0f03103a"
+  },
+  {
+    "id": "7c4b2015-81b6-4346-ae49-1bb2fc8920c3",
+    "name": "GPUCompress",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-gpucompress-dc338a27"
+  },
+  {
+    "id": "e083fdf3-7ff1-49e3-887e-ea5400a1783f",
+    "name": "KV_Lobotomy",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-kv-lobotomy-60f3f13f"
+  },
+  {
+    "id": "7db75a82-c370-46d3-9c07-e50c5270f8d0",
+    "name": "Pythia",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-pythia-d0c013b0"
+  },
+  {
+    "id": "33233eab-5ece-49e3-86cc-2b21d208c75f",
+    "name": "WIDGET",
+    "color": "#1976d2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-widget-541d31e7"
+  },
+  {
+    "id": "903f55ed-86f3-460f-a04a-84a16ab6d9b2",
+    "name": "Agentic Projects",
+    "color": "#388e3c",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-agentic-projects-333b216b"
+  },
+  {
+    "id": "dbcd69b8-2628-4b80-8856-5c76171466b3",
+    "name": "IOWarp",
+    "color": "#388e3c",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-iowarp-6e81d28e"
+  },
+  {
+    "id": "a236593b-f9f9-4524-b433-cf251a592c58",
+    "name": "Jarvis",
+    "color": "#388e3c",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-jarvis-7cde5e94"
+  },
+  {
+    "id": "d80912a6-a4fc-412a-9612-d3240719ab0a",
+    "name": "ChronoLog",
+    "color": "#f57c00",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-chronolog-1cd00e5f"
+  },
+  {
+    "id": "57ddb491-0b4e-4a3b-986f-835d83103ffa",
+    "name": "Homework / In Class",
+    "color": "#00796b",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-homework-in-class-8d3da081"
+  },
+  {
+    "id": "54cacf77-c275-47cd-b5f8-ff1a0290fe5e",
+    "name": "Anthony",
+    "color": "#7b1fa2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-anthony-7065448d"
+  },
+  {
+    "id": "0668a310-75cb-43c4-b781-17a2db5ecb96",
+    "name": "Luke",
+    "color": "#7b1fa2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-luke-d230b97a"
+  },
+  {
+    "id": "60afd600-d55c-41a4-8567-e882b7f678c1",
+    "name": "Jaime",
+    "color": "#7b1fa2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-jaime-acacf05f"
+  },
+  {
+    "id": "f14e943e-72d8-4d3f-93bf-eba0f648d3ba",
+    "name": "Kun",
+    "color": "#7b1fa2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-kun-99cabd34"
+  },
+  {
+    "id": "af2a3e6a-9ddc-4a75-9bea-30b306caccd0",
+    "name": "Eneko",
+    "color": "#7b1fa2",
+    "externalMeetUrl": "https://meet.jcernuda.com/gnosis-eneko-56e2e3a9"
+  }
+]

@@ -1,0 +1,13 @@
+services:
+  atrium:
+    build: .
+    container_name: atrium
+    restart: unless-stopped
+    ports:
+      - "8091:8090"
+    env_file:
+      - .env
+    environment:
+      - ROOMS_FILE=/config/rooms.json
+    volumes:
+      - ./config:/config:ro

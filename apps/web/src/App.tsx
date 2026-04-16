@@ -1,34 +1,32 @@
-import { useEffect, useState } from "react";
-import { Container, Typography, Card, CardContent } from "@mui/material";
-import Grid from "@mui/material/Grid2";
-import type { Room } from "@atrium/shared";
+import { CircularProgress, CssBaseline, Stack, ThemeProvider, createTheme } from "@mui/material";
+import { useMemo } from "react";
+import { useStore } from "./store";
+import { useBootstrap } from "./hooks/useBootstrap";
+import { Login } from "./pages/Login";
+import { Office } from "./pages/Office";
 
 export function App() {
-  const [rooms, setRooms] = useState<Room[]>([]);
+  const { loading } = useBootstrap();
+  const user = useStore((s) => s.user);
+  const brand = useStore((s) => s.brand);
 
-  useEffect(() => {
-    fetch("/api/rooms")
-      .then((r) => r.json())
-      .then(setRooms)
-      .catch(console.error);
-  }, []);
+  const theme = useMemo(
+    () => createTheme({ palette: { primary: { main: brand.accentColor } } }),
+    [brand.accentColor],
+  );
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Typography variant="h3" gutterBottom>
-        Atrium
-      </Typography>
-      <Grid container spacing={2}>
-        {rooms.map((room) => (
-          <Grid size={{ xs: 12, sm: 6, md: 4 }} key={room.id}>
-            <Card sx={{ borderLeft: room.color ? `6px solid ${room.color}` : "none" }}>
-              <CardContent>
-                <Typography variant="h5">{room.name}</Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-    </Container>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      {loading ? (
+        <Stack sx={{ minHeight: "100vh" }} alignItems="center" justifyContent="center">
+          <CircularProgress />
+        </Stack>
+      ) : user ? (
+        <Office />
+      ) : (
+        <Login />
+      )}
+    </ThemeProvider>
   );
 }

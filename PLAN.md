@@ -12,7 +12,7 @@
 - Google OAuth
 - Per-room colors (already a patch in the old app)
 - Config file for rooms (JSON) so we can migrate current Gnosis setup directly
-- Deploy to `atrium.jcernuda.com` in parallel with existing `gnosis.jcernuda.com`
+- Build + test locally; when ready, swap the Cloudflare Tunnel route from the old bigodines/matrix container to this one. Same public URL (`gnosis.jcernuda.com`), same Google OAuth app — zero reconfiguration for existing users.
 
 ## Phase 2 — Persistence + theming framework
 - Postgres schema: users, rooms, sessions, messages
