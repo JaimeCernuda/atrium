@@ -17,8 +17,9 @@ import { useBootstrap } from "./hooks/useBootstrap";
 import { Login } from "./pages/Login";
 import { Office } from "./pages/Office";
 import { Metrics } from "./pages/Metrics";
+import { AdminRooms } from "./pages/AdminRooms";
 
-type Route = "office" | "metrics";
+type Route = "office" | "metrics" | "rooms";
 
 export function App() {
   const { loading } = useBootstrap();
@@ -40,7 +41,12 @@ export function App() {
         </Stack>
       ) : !user ? (
         <Login />
-      ) : route === "metrics" ? (
+      ) : route === "office" ? (
+        <Office
+          onViewMetrics={user.isAdmin ? () => setRoute("metrics") : undefined}
+          onViewRooms={user.isAdmin ? () => setRoute("rooms") : undefined}
+        />
+      ) : (
         <Box>
           <AppBar position="sticky" color="default">
             <Toolbar>
@@ -48,14 +54,13 @@ export function App() {
                 Back to office
               </Button>
               <Typography variant="h6" sx={{ ml: 2 }}>
-                {brand.name} — Metrics
+                {brand.name} — {route === "metrics" ? "Metrics" : "Rooms"}
               </Typography>
             </Toolbar>
           </AppBar>
-          <Metrics />
+          {route === "metrics" && <Metrics />}
+          {route === "rooms" && <AdminRooms />}
         </Box>
-      ) : (
-        <Office onViewMetrics={user.isAdmin ? () => setRoute("metrics") : undefined} />
       )}
     </ThemeProvider>
   );

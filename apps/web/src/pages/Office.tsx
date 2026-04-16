@@ -7,9 +7,10 @@ import { RoomCard } from "../components/RoomCard";
 
 interface Props {
   onViewMetrics?: () => void;
+  onViewRooms?: () => void;
 }
 
-export function Office({ onViewMetrics }: Props) {
+export function Office({ onViewMetrics, onViewRooms }: Props) {
   const brand = useStore((s) => s.brand);
   const user = useStore((s) => s.user);
   const rooms = useStore((s) => s.rooms);
@@ -39,6 +40,11 @@ export function Office({ onViewMetrics }: Props) {
           </Stack>
           {user && (
             <Stack direction="row" alignItems="center" spacing={1}>
+              {user.isAdmin && onViewRooms && (
+                <Button size="small" onClick={onViewRooms}>
+                  Rooms
+                </Button>
+              )}
               {user.isAdmin && onViewMetrics && (
                 <Button size="small" onClick={onViewMetrics}>
                   Metrics

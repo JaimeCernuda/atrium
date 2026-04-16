@@ -6,10 +6,11 @@ import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import type { User } from "@atrium/shared";
 import { loadConfig } from "./config.js";
-import { getUser, registerAuth, requireUser } from "./auth.js";
+import { registerAuth } from "./auth.js";
 import { createPresenceServer } from "./presence.js";
 import { closeOrphanedSessions } from "./db.js";
 import { registerMetrics } from "./metrics.js";
+import { registerRooms, seedRoomsIfEmpty } from "./rooms.js";
 
 const config = loadConfig();
 
@@ -17,16 +18,12 @@ const app = Fastify({ logger: true });
 await app.register(cors, { origin: true, credentials: true });
 await app.register(cookie);
 await registerAuth(app, config);
+await registerRooms(app, config);
 await registerMetrics(app, config);
+await seedRoomsIfEmpty(config.rooms);
 await closeOrphanedSessions();
 
 app.get("/healthz", async () => ({ ok: true }));
-
-app.get("/api/rooms", async (req, reply) => {
-  const user = await requireUser(req, reply, config.session.cookieName);
-  if (!user) return;
-  return config.rooms;
-});
 
 app.get("/api/config", async () => ({
   brand: {

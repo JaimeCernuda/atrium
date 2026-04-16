@@ -20,6 +20,20 @@ model User {
   sentMessages     Message[]         @relation("SentMessages")
 }
 
+model Room {
+  id              String   @id
+  name            String
+  color           String?
+  category        String?
+  disableMeeting  Boolean  @default(false)
+  externalMeetUrl String?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([sortOrder])
+}
+
 model PresenceSession {
   id        String    @id @default(cuid())
   userId    String
@@ -46,15 +60,14 @@ model MeetingSession {
   @@index([endedAt])
 }
 
-// Reserved for future use (phase 5)
 model Message {
-  id         String   @id @default(cuid())
-  senderId   String
+  id          String   @id @default(cuid())
+  senderId    String
   recipientId String?
-  roomId     String?
-  body       String
-  createdAt  DateTime @default(now())
-  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  roomId      String?
+  body        String
+  createdAt   DateTime @default(now())
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
 
   @@index([recipientId, createdAt])
   @@index([roomId, createdAt])
