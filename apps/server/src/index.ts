@@ -7,19 +7,23 @@ import fastifyStatic from "@fastify/static";
 import type { User } from "@atrium/shared";
 import { loadConfig } from "./config.js";
 import { registerAuth } from "./auth.js";
-import { createPresenceServer } from "./presence.js";
+import { createPresenceServer, type Broadcaster } from "./presence.js";
 import { closeOrphanedSessions } from "./db.js";
 import { registerMetrics } from "./metrics.js";
 import { registerRooms, seedRoomsIfEmpty } from "./rooms.js";
+import { registerChat } from "./chat.js";
 
 const config = loadConfig();
 
 const app = Fastify({ logger: true });
+const broadcasterRef: { current: Broadcaster | null } = { current: null };
+
 await app.register(cors, { origin: true, credentials: true });
 await app.register(cookie);
 await registerAuth(app, config);
 await registerRooms(app, config);
 await registerMetrics(app, config);
+await registerChat(app, config, broadcasterRef);
 await seedRoomsIfEmpty(config.rooms);
 await closeOrphanedSessions();
 
@@ -46,7 +50,8 @@ if (existsSync(staticRoot)) {
 
 await app.listen({ port: config.port, host: "0.0.0.0" });
 
-const io = createPresenceServer(app.server);
+const { io, broadcaster } = createPresenceServer(app.server);
+broadcasterRef.current = broadcaster;
 io.use((socket, next) => {
   const rawCookie = socket.request.headers.cookie ?? "";
   const match = new RegExp(`(?:^|;\\s*)${config.session.cookieName}=([^;]+)`).exec(rawCookie);

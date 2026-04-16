@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Room, User } from "@atrium/shared";
+import type { ChatMessage, Room, User } from "@atrium/shared";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
 
@@ -12,6 +12,10 @@ export function useBootstrap(): { loading: boolean } {
   const addPresence = useStore((s) => s.addPresence);
   const removePresence = useStore((s) => s.removePresence);
   const setMeetingFlag = useStore((s) => s.setMeetingFlag);
+  const setGlobalMessages = useStore((s) => s.setGlobalMessages);
+  const appendGlobalMessage = useStore((s) => s.appendGlobalMessage);
+  const appendDmMessage = useStore((s) => s.appendDmMessage);
+  const setActivePing = useStore((s) => s.setActivePing);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,11 +41,19 @@ export function useBootstrap(): { loading: boolean } {
         setRooms((await roomsRes.json()) as Room[]);
       }
 
+      const chatRes = await fetch("/api/chat/global", { credentials: "include" });
+      if (chatRes.ok && !cancelled) {
+        setGlobalMessages((await chatRes.json()) as ChatMessage[]);
+      }
+
       const socket = getSocket();
       socket.on("presence:snapshot", setPresence);
       socket.on("presence:enter", ({ user, roomId }) => addPresence(roomId, user));
       socket.on("presence:leave", ({ userId, roomId }) => removePresence(roomId, userId));
       socket.on("presence:meeting", ({ userId, inMeeting }) => setMeetingFlag(userId, inMeeting));
+      socket.on("chat:global", appendGlobalMessage);
+      socket.on("chat:dm", appendDmMessage);
+      socket.on("ping:received", setActivePing);
       socket.connect();
 
       if (!cancelled) setLoading(false);
@@ -53,7 +65,19 @@ export function useBootstrap(): { loading: boolean } {
     return () => {
       cancelled = true;
     };
-  }, [setBrand, setUser, setRooms, setPresence, addPresence, removePresence, setMeetingFlag]);
+  }, [
+    setBrand,
+    setUser,
+    setRooms,
+    setPresence,
+    addPresence,
+    removePresence,
+    setMeetingFlag,
+    setGlobalMessages,
+    appendGlobalMessage,
+    appendDmMessage,
+    setActivePing,
+  ]);
 
   return { loading };
 }

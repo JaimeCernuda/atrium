@@ -22,25 +22,43 @@ function toApi(room: {
   };
 }
 
+const COLOR_TO_CATEGORY: Record<string, string> = {
+  "#9e9e9e": "Common",
+  "#1976d2": "Papers",
+  "#388e3c": "Projects",
+  "#f57c00": "Engineering",
+  "#00796b": "Academic",
+  "#7b1fa2": "Offices",
+};
+
 /**
- * Populate rooms from ROOMS_FILE on first startup (DB is empty).
- * Idempotent: no-op if any rooms already exist.
+ * Populate rooms from ROOMS_FILE on first startup (DB is empty),
+ * and backfill categories from color on subsequent boots if they were never set.
  */
 export async function seedRoomsIfEmpty(rooms: Room[]): Promise<void> {
   const count = await prisma.room.count();
-  if (count > 0 || rooms.length === 0) return;
-  await prisma.room.createMany({
-    data: rooms.map((r, i) => ({
-      id: r.id,
-      name: r.name,
-      color: r.color,
-      category: r.category,
-      disableMeeting: r.disableMeeting ?? false,
-      externalMeetUrl: r.externalMeetUrl,
-      sortOrder: i,
-    })),
-  });
-  console.log(`[seed] inserted ${rooms.length} rooms from ROOMS_FILE`);
+  if (count === 0 && rooms.length > 0) {
+    await prisma.room.createMany({
+      data: rooms.map((r, i) => ({
+        id: r.id,
+        name: r.name,
+        color: r.color,
+        category: r.category ?? (r.color ? COLOR_TO_CATEGORY[r.color] : null) ?? null,
+        disableMeeting: r.disableMeeting ?? false,
+        externalMeetUrl: r.externalMeetUrl,
+        sortOrder: i,
+      })),
+    });
+    console.log(`[seed] inserted ${rooms.length} rooms from ROOMS_FILE`);
+    return;
+  }
+
+  for (const [color, category] of Object.entries(COLOR_TO_CATEGORY)) {
+    await prisma.room.updateMany({
+      where: { color, category: null },
+      data: { category },
+    });
+  }
 }
 
 export async function registerRooms(app: FastifyInstance, config: Config): Promise<void> {

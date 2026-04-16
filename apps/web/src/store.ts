@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { PresenceUser, Room, User } from "@atrium/shared";
+import type { ChatMessage, PingPayload, PresenceUser, Room, User } from "@atrium/shared";
 
 interface AtriumState {
   brand: { name: string; logoUrl?: string; accentColor: string };
@@ -19,9 +19,22 @@ interface AtriumState {
   addPresence: (roomId: string, user: PresenceUser) => void;
   removePresence: (roomId: string, userId: string) => void;
   setMeetingFlag: (userId: string, inMeeting: boolean) => void;
+
+  globalMessages: ChatMessage[];
+  setGlobalMessages: (msgs: ChatMessage[]) => void;
+  appendGlobalMessage: (msg: ChatMessage) => void;
+
+  dmByUser: Record<string, ChatMessage[]>;
+  setDmMessages: (userId: string, msgs: ChatMessage[]) => void;
+  appendDmMessage: (msg: ChatMessage) => void;
+
+  activePing: PingPayload | null;
+  setActivePing: (p: PingPayload | null) => void;
 }
 
-export const useStore = create<AtriumState>((set) => ({
+const LIMIT = 200;
+
+export const useStore = create<AtriumState>((set, get) => ({
   brand: { name: "Atrium", accentColor: "#1976d2" },
   setBrand: (brand) => set({ brand }),
 
@@ -62,4 +75,33 @@ export const useStore = create<AtriumState>((set) => ({
         ]),
       ),
     })),
+
+  globalMessages: [],
+  setGlobalMessages: (globalMessages) => set({ globalMessages }),
+  appendGlobalMessage: (msg) =>
+    set((state) => {
+      if (state.globalMessages.some((m) => m.id === msg.id)) return state;
+      return { globalMessages: [...state.globalMessages, msg].slice(-LIMIT) };
+    }),
+
+  dmByUser: {},
+  setDmMessages: (userId, msgs) =>
+    set((state) => ({ dmByUser: { ...state.dmByUser, [userId]: msgs } })),
+  appendDmMessage: (msg) =>
+    set((state) => {
+      const me = state.user;
+      if (!me) return state;
+      const otherId = msg.sender.id === me.id ? msg.recipientId : msg.sender.id;
+      if (!otherId) return state;
+      const prev = state.dmByUser[otherId] ?? [];
+      if (prev.some((m) => m.id === msg.id)) return state;
+      return { dmByUser: { ...state.dmByUser, [otherId]: [...prev, msg].slice(-LIMIT) } };
+    }),
+
+  activePing: null,
+  setActivePing: (activePing) => set({ activePing }),
 }));
+
+export function currentUser(): User | null {
+  return useStore.getState().user;
+}

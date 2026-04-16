@@ -5,10 +5,16 @@ import {
   Card,
   CardActions,
   CardContent,
+  IconButton,
+  Menu,
+  MenuItem,
   Stack,
   Tooltip,
   Typography,
 } from "@mui/material";
+import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
+import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
+import { useState } from "react";
 import type { PresenceUser, Room } from "@atrium/shared";
 import { getSocket } from "../socket";
 
@@ -17,9 +23,12 @@ interface Props {
   users: PresenceUser[];
   isCurrent: boolean;
   onEnterRoom: () => void;
+  onDmUser: (user: PresenceUser) => void;
 }
 
-export function RoomCard({ room, users, isCurrent, onEnterRoom }: Props) {
+export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Props) {
+  const [menuState, setMenuState] = useState<{ anchor: HTMLElement; user: PresenceUser } | null>(null);
+
   const openMeeting = () => {
     if (!room.externalMeetUrl) return;
     const socket = getSocket();
@@ -31,6 +40,11 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom }: Props) {
         window.clearInterval(poll);
       }
     }, 1000);
+  };
+
+  const pingUser = (userId: string) => {
+    getSocket().emit("ping:send", userId);
+    setMenuState(null);
   };
 
   return (
@@ -53,7 +67,12 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom }: Props) {
           <AvatarGroup max={5}>
             {users.map((u) => (
               <Tooltip key={u.id} title={`${u.name}${u.inMeeting ? " (in meeting)" : ""}`}>
-                <Avatar src={u.imageUrl} alt={u.name}>
+                <Avatar
+                  src={u.imageUrl}
+                  alt={u.name}
+                  onClick={(e) => setMenuState({ anchor: e.currentTarget, user: u })}
+                  sx={{ cursor: "pointer" }}
+                >
                   {u.name.charAt(0)}
                 </Avatar>
               </Tooltip>
@@ -73,6 +92,27 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom }: Props) {
           )}
         </Stack>
       </CardActions>
+
+      <Menu
+        anchorEl={menuState?.anchor}
+        open={!!menuState}
+        onClose={() => setMenuState(null)}
+      >
+        <MenuItem disabled>{menuState?.user.name}</MenuItem>
+        <MenuItem onClick={() => menuState && pingUser(menuState.user.id)}>
+          <NotificationsActiveIcon fontSize="small" sx={{ mr: 1 }} />
+          Ping to talk
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (menuState) onDmUser(menuState.user);
+            setMenuState(null);
+          }}
+        >
+          <ChatBubbleOutlineIcon fontSize="small" sx={{ mr: 1 }} />
+          Send message
+        </MenuItem>
+      </Menu>
     </Card>
   );
 }
