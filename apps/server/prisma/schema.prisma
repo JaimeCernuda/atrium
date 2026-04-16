@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String            @id
+  email            String            @unique
+  name             String
+  imageUrl         String?
+  isAdmin          Boolean           @default(false)
+  createdAt        DateTime          @default(now())
+  lastSeenAt       DateTime?
+  presenceSessions PresenceSession[]
+  meetingSessions  MeetingSession[]
+  sentMessages     Message[]         @relation("SentMessages")
+}
+
+model PresenceSession {
+  id        String    @id @default(cuid())
+  userId    String
+  roomId    String
+  joinedAt  DateTime  @default(now())
+  leftAt    DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, joinedAt])
+  @@index([roomId, joinedAt])
+  @@index([leftAt])
+}
+
+model MeetingSession {
+  id        String    @id @default(cuid())
+  userId    String
+  roomId    String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, startedAt])
+  @@index([roomId, startedAt])
+  @@index([endedAt])
+}
+
+// Reserved for future use (phase 5)
+model Message {
+  id         String   @id @default(cuid())
+  senderId   String
+  recipientId String?
+  roomId     String?
+  body       String
+  createdAt  DateTime @default(now())
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, createdAt])
+  @@index([roomId, createdAt])
+}

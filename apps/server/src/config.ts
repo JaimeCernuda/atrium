@@ -6,6 +6,7 @@ export interface Config {
   publicUrl: string;
   rooms: Room[];
   whitelistDomains: string[];
+  adminEmails: string[];
   google: {
     clientId: string;
     clientSecret: string;
@@ -47,6 +48,7 @@ export function loadConfig(): Config {
     publicUrl: process.env.PUBLIC_URL ?? "http://localhost:5173",
     rooms: loadRooms(process.env.ROOMS_FILE),
     whitelistDomains: parseWhitelist(process.env.WHITELIST_DOMAINS),
+    adminEmails: parseWhitelist(process.env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
     google: {
       clientId: required("GOOGLE_CLIENT_ID"),
       clientSecret: required("GOOGLE_CLIENT_SECRET"),

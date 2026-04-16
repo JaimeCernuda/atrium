@@ -6,6 +6,7 @@ import type {
   ServerToClientEvents,
   User,
 } from "@atrium/shared";
+import { closeMeetingSessions, closePresenceSessions, openMeetingSession, openPresenceSession } from "./db.js";
 
 type PresenceIO = IOServer<ClientToServerEvents, ServerToClientEvents, object, { user: User }>;
 
@@ -41,21 +42,31 @@ export function createPresenceServer(httpServer: HttpServer): PresenceIO {
     socket.on("presence:join", (roomId) => {
       const prev = userRoom.get(user.id);
       if (prev === roomId) return;
-      if (prev) {
-        io.emit("presence:leave", { userId: user.id, roomId: prev });
-      }
+      if (prev) io.emit("presence:leave", { userId: user.id, roomId: prev });
       userRoom.set(user.id, roomId);
       io.emit("presence:enter", { user: presenceUser, roomId });
+      openPresenceSession(user.id, roomId).catch((err) =>
+        console.error("openPresenceSession", err),
+      );
     });
 
     socket.on("presence:meeting-start", () => {
       presenceUser.inMeeting = true;
       io.emit("presence:meeting", { userId: user.id, inMeeting: true });
+      const roomId = userRoom.get(user.id);
+      if (roomId) {
+        openMeetingSession(user.id, roomId).catch((err) =>
+          console.error("openMeetingSession", err),
+        );
+      }
     });
 
     socket.on("presence:meeting-end", () => {
       presenceUser.inMeeting = false;
       io.emit("presence:meeting", { userId: user.id, inMeeting: false });
+      closeMeetingSessions(user.id).catch((err) =>
+        console.error("closeMeetingSessions", err),
+      );
     });
 
     socket.on("disconnect", () => {
@@ -63,6 +74,9 @@ export function createPresenceServer(httpServer: HttpServer): PresenceIO {
       userRoom.delete(user.id);
       users.delete(user.id);
       if (roomId) io.emit("presence:leave", { userId: user.id, roomId });
+      Promise.all([closePresenceSessions(user.id), closeMeetingSessions(user.id)]).catch((err) =>
+        console.error("close sessions on disconnect", err),
+      );
     });
   });
 

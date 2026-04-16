@@ -8,6 +8,8 @@ import type { User } from "@atrium/shared";
 import { loadConfig } from "./config.js";
 import { getUser, registerAuth, requireUser } from "./auth.js";
 import { createPresenceServer } from "./presence.js";
+import { closeOrphanedSessions } from "./db.js";
+import { registerMetrics } from "./metrics.js";
 
 const config = loadConfig();
 
@@ -15,6 +17,8 @@ const app = Fastify({ logger: true });
 await app.register(cors, { origin: true, credentials: true });
 await app.register(cookie);
 await registerAuth(app, config);
+await registerMetrics(app, config);
+await closeOrphanedSessions();
 
 app.get("/healthz", async () => ({ ok: true }));
 

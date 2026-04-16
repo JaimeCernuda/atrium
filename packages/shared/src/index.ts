@@ -12,6 +12,7 @@ export interface User {
   name: string;
   email: string;
   imageUrl?: string;
+  isAdmin?: boolean;
 }
 
 export interface PresenceUser extends User {

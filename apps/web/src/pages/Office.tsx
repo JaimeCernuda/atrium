@@ -1,11 +1,15 @@
-import { AppBar, Avatar, Box, Container, IconButton, Stack, Toolbar, Typography } from "@mui/material";
+import { AppBar, Avatar, Box, Button, Container, IconButton, Stack, Toolbar, Typography } from "@mui/material";
 import Grid from "@mui/material/Grid2";
 import LogoutIcon from "@mui/icons-material/Logout";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
 import { RoomCard } from "../components/RoomCard";
 
-export function Office() {
+interface Props {
+  onViewMetrics?: () => void;
+}
+
+export function Office({ onViewMetrics }: Props) {
   const brand = useStore((s) => s.brand);
   const user = useStore((s) => s.user);
   const rooms = useStore((s) => s.rooms);
@@ -35,6 +39,11 @@ export function Office() {
           </Stack>
           {user && (
             <Stack direction="row" alignItems="center" spacing={1}>
+              {user.isAdmin && onViewMetrics && (
+                <Button size="small" onClick={onViewMetrics}>
+                  Metrics
+                </Button>
+              )}
               <Avatar src={user.imageUrl} alt={user.name} sx={{ width: 32, height: 32 }}>
                 {user.name.charAt(0)}
               </Avatar>

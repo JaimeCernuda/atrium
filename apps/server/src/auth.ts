@@ -3,6 +3,7 @@ import oauth2, { type OAuth2Namespace } from "@fastify/oauth2";
 import jwtPlugin from "@fastify/jwt";
 import type { User } from "@atrium/shared";
 import { isEmailAllowed, type Config } from "./config.js";
+import { prisma, upsertUser } from "./db.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -102,6 +103,7 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
       email: profile.email,
       imageUrl: profile.picture,
     };
+    await upsertUser(user, config.adminEmails);
 
     const jwt = app.jwt.sign(user, { expiresIn: `${Math.floor(config.session.maxAge / 1000)}s` });
     reply.setCookie(config.session.cookieName, jwt, {
@@ -122,6 +124,10 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
   app.get("/api/me", async (req, reply) => {
     const user = await getUser(req, config.session.cookieName);
     if (!user) return reply.code(401).send({ error: "unauthorized" });
-    return user;
+    const dbUser = await prisma.user.findUnique({
+      where: { id: user.id },
+      select: { isAdmin: true },
+    });
+    return { ...user, isAdmin: dbUser?.isAdmin ?? false };
   });
 }
