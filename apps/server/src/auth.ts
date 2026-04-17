@@ -4,6 +4,7 @@ import jwtPlugin from "@fastify/jwt";
 import type { User } from "@atrium/shared";
 import { isEmailAllowed, type Config } from "./config.js";
 import { prisma, upsertUser } from "./db.js";
+import type { Broadcaster } from "./presence.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -98,7 +99,11 @@ function issueSessionAndRedirect(
   reply.redirect("/");
 }
 
-export async function registerAuth(app: FastifyInstance, config: Config): Promise<void> {
+export async function registerAuth(
+  app: FastifyInstance,
+  config: Config,
+  broadcaster: { current: Broadcaster | null },
+): Promise<void> {
   await app.register(jwtPlugin, {
     secret: config.session.secret,
     cookie: { cookieName: config.session.cookieName, signed: false },
@@ -165,9 +170,55 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     if (!user) return reply.code(401).send({ error: "unauthorized" });
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { isAdmin: true },
+      select: { id: true, name: true, email: true, imageUrl: true, isAdmin: true },
     });
-    return { ...user, isAdmin: dbUser?.isAdmin ?? false };
+    if (!dbUser) return reply.code(401).send({ error: "unauthorized" });
+    return {
+      id: dbUser.id,
+      name: dbUser.name,
+      email: dbUser.email,
+      imageUrl: dbUser.imageUrl ?? undefined,
+      isAdmin: dbUser.isAdmin,
+    };
+  });
+
+  app.patch<{ Body: { name?: string; imageUrl?: string | null } }>("/api/me", async (req, reply) => {
+    const user = await getUser(req, config.session.cookieName);
+    if (!user) return reply.code(401).send({ error: "unauthorized" });
+    const body = req.body ?? {};
+    const data: { name?: string; imageUrl?: string | null } = {};
+    if (typeof body.name === "string") {
+      const trimmed = body.name.trim();
+      if (!trimmed) return reply.code(400).send({ error: "name cannot be empty" });
+      if (trimmed.length > 80) return reply.code(400).send({ error: "name too long" });
+      data.name = trimmed;
+    }
+    if (body.imageUrl !== undefined) {
+      if (body.imageUrl === null || body.imageUrl === "") {
+        data.imageUrl = null;
+      } else {
+        if (!/^https?:\/\//i.test(body.imageUrl)) {
+          return reply.code(400).send({ error: "imageUrl must be http(s)" });
+        }
+        if (body.imageUrl.length > 500) {
+          return reply.code(400).send({ error: "imageUrl too long" });
+        }
+        data.imageUrl = body.imageUrl;
+      }
+    }
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data,
+      select: { id: true, name: true, email: true, imageUrl: true, isAdmin: true },
+    });
+    const payload = {
+      id: updated.id,
+      name: updated.name,
+      email: updated.email,
+      imageUrl: updated.imageUrl ?? undefined,
+    };
+    broadcaster.current?.broadcastUserUpdate(payload);
+    return { ...payload, isAdmin: updated.isAdmin };
   });
 
   app.get("/api/auth/providers", async () => ({
@@ -189,12 +240,24 @@ async function handleProfile(
     reply.code(403).send({ error: `email domain not allowed: ${profile.email}` });
     return null;
   }
-  const user: User = {
-    id: profile.id,
-    name: profile.name,
-    email: profile.email,
-    imageUrl: profile.imageUrl,
+  await upsertUser(
+    { id: profile.id, name: profile.name, email: profile.email, imageUrl: profile.imageUrl },
+    config.adminEmails,
+  );
+  // Return the DB user so the session reflects any custom name/image the user
+  // has set previously, rather than whatever OAuth returned this time.
+  const dbUser = await prisma.user.findUnique({
+    where: { id: profile.id },
+    select: { id: true, name: true, email: true, imageUrl: true },
+  });
+  if (!dbUser) {
+    reply.code(500).send({ error: "user creation failed" });
+    return null;
+  }
+  return {
+    id: dbUser.id,
+    name: dbUser.name,
+    email: dbUser.email,
+    imageUrl: dbUser.imageUrl ?? undefined,
   };
-  await upsertUser(user, config.adminEmails);
-  return user;
 }

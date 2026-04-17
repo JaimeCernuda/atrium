@@ -28,10 +28,13 @@ model Room {
   disableMeeting  Boolean  @default(false)
   externalMeetUrl String?
   sortOrder       Int      @default(0)
+  ownerEmail      String?
+  locked          Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@index([sortOrder])
+  @@index([ownerEmail])
 }
 
 model PresenceSession {

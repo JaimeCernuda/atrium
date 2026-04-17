@@ -12,10 +12,11 @@ export async function upsertUser(
   const isAdmin = adminEmails.includes(user.email.toLowerCase());
   await prisma.user.upsert({
     where: { id: user.id },
+    // On re-login: refresh email/admin/lastSeen but DO NOT overwrite the
+    // user's customized name/imageUrl. Those stick until the user changes
+    // them via profile edit / avatar upload.
     update: {
       email: user.email,
-      name: user.name,
-      imageUrl: user.imageUrl,
       isAdmin,
       lastSeenAt: new Date(),
     },

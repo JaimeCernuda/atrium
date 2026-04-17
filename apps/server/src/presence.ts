@@ -13,12 +13,14 @@ import {
   openMeetingSession,
   openPresenceSession,
 } from "./db.js";
+import { findRoomOwnedBy, isRoomEnterableBy } from "./rooms.js";
 
 type PresenceIO = IOServer<ClientToServerEvents, ServerToClientEvents, object, { user: User }>;
 
 export interface Broadcaster {
   emitGlobal: (message: ChatMessage) => void;
   emitDmTo: (userIds: string[], message: ChatMessage) => void;
+  broadcastUserUpdate: (user: User) => void;
 }
 
 export function createPresenceServer(httpServer: HttpServer): {
@@ -47,7 +49,20 @@ export function createPresenceServer(httpServer: HttpServer): {
     return Array.from(socketByUser.get(userId) ?? []);
   }
 
-  io.on("connection", (socket) => {
+  function moveUserToRoom(userId: string, roomId: string): void {
+    const presenceUser = users.get(userId);
+    if (!presenceUser) return;
+    const prev = userRoom.get(userId);
+    if (prev === roomId) return;
+    if (prev) io.emit("presence:leave", { userId, roomId: prev });
+    userRoom.set(userId, roomId);
+    io.emit("presence:enter", { user: presenceUser, roomId });
+    openPresenceSession(userId, roomId).catch((err) =>
+      console.error("openPresenceSession", err),
+    );
+  }
+
+  io.on("connection", async (socket) => {
     const user = socket.data.user;
     if (!user) {
       socket.disconnect(true);
@@ -59,15 +74,23 @@ export function createPresenceServer(httpServer: HttpServer): {
     (socketByUser.get(user.id) ?? socketByUser.set(user.id, new Set()).get(user.id)!).add(socket.id);
     socket.emit("presence:snapshot", snapshot());
 
-    socket.on("presence:join", (roomId) => {
-      const prev = userRoom.get(user.id);
-      if (prev === roomId) return;
-      if (prev) io.emit("presence:leave", { userId: user.id, roomId: prev });
-      userRoom.set(user.id, roomId);
-      io.emit("presence:enter", { user: presenceUser, roomId });
-      openPresenceSession(user.id, roomId).catch((err) =>
-        console.error("openPresenceSession", err),
-      );
+    // Auto-join the user's office on first socket if they own one and aren't already placed.
+    if (!userRoom.has(user.id)) {
+      try {
+        const officeId = await findRoomOwnedBy(user.email);
+        if (officeId) moveUserToRoom(user.id, officeId);
+      } catch (err) {
+        console.error("autoJoin office", err);
+      }
+    }
+
+    socket.on("presence:join", async (roomId) => {
+      const check = await isRoomEnterableBy(roomId, user.email);
+      if (!check.ok) {
+        // Silently ignore — client should have filtered already, but double-check server-side.
+        return;
+      }
+      moveUserToRoom(user.id, roomId);
     });
 
     socket.on("presence:meeting-start", () => {
@@ -96,6 +119,16 @@ export function createPresenceServer(httpServer: HttpServer): {
       }
     });
 
+    socket.on("knock:send", (roomId) => {
+      const payload = { from: user, roomId };
+      for (const [uid, rid] of userRoom) {
+        if (rid !== roomId || uid === user.id) continue;
+        for (const sid of socketsForUser(uid)) {
+          io.to(sid).emit("knock:received", payload);
+        }
+      }
+    });
+
     socket.on("disconnect", () => {
       const userSockets = socketByUser.get(user.id);
       userSockets?.delete(socket.id);
@@ -118,6 +151,15 @@ export function createPresenceServer(httpServer: HttpServer): {
       const targets = new Set<string>();
       for (const uid of userIds) for (const sid of socketsForUser(uid)) targets.add(sid);
       for (const sid of targets) io.to(sid).emit("chat:dm", message);
+    },
+    broadcastUserUpdate: (user) => {
+      const existing = users.get(user.id);
+      if (existing) {
+        existing.name = user.name;
+        existing.email = user.email;
+        existing.imageUrl = user.imageUrl;
+      }
+      io.emit("user:updated", user);
     },
   };
 

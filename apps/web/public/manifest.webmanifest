@@ -1,0 +1,19 @@
+{
+  "name": "Gnosis Virtual Office",
+  "short_name": "Gnosis",
+  "description": "Gnosis Research Center virtual office",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0c14",
+  "theme_color": "#7b1fa2",
+  "icons": [
+    {
+      "src": "/brand/gnosis-logo.png",
+      "sizes": "960x960",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

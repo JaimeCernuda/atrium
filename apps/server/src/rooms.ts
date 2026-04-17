@@ -11,6 +11,8 @@ function toApi(room: {
   category: string | null;
   disableMeeting: boolean;
   externalMeetUrl: string | null;
+  ownerEmail: string | null;
+  locked: boolean;
 }): Room {
   return {
     id: room.id,
@@ -19,8 +21,18 @@ function toApi(room: {
     category: room.category ?? undefined,
     disableMeeting: room.disableMeeting,
     externalMeetUrl: room.externalMeetUrl ?? undefined,
+    ownerEmail: room.ownerEmail ?? undefined,
+    locked: room.locked,
   };
 }
+
+const OFFICE_OWNERS: Record<string, string> = {
+  Anthony: "akougkas@illinoistech.edu",
+  Luke: "llogan@illinoistech.edu",
+  Jaime: "jcernudagarcia@illinoistech.edu",
+  Kun: "kfeng1@illinoistech.edu",
+  Eneko: "egonzalez30@illinoistech.edu",
+};
 
 const COLOR_TO_CATEGORY: Record<string, string> = {
   "#9e9e9e": "Common",
@@ -59,6 +71,67 @@ export async function seedRoomsIfEmpty(rooms: Room[]): Promise<void> {
       data: { category },
     });
   }
+
+  // Idempotent one-time renames and status-room additions
+  await prisma.room.updateMany({
+    where: { name: "Homework / In Class" },
+    data: { name: "Class" },
+  });
+  await prisma.room.updateMany({
+    where: { name: "Agentic Projects" },
+    data: { name: "Agentic" },
+  });
+
+  const maxOrderRow = await prisma.room.aggregate({ _max: { sortOrder: true } });
+  let nextOrder = (maxOrderRow._max.sortOrder ?? 0) + 1;
+  const statusDefaults = [
+    { name: "Homework", color: "#00796b" },
+    { name: "Away", color: "#00796b" },
+  ];
+  for (const r of statusDefaults) {
+    const exists = await prisma.room.findFirst({ where: { name: r.name } });
+    if (!exists) {
+      await prisma.room.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: r.name,
+          color: r.color,
+          category: "Status",
+          disableMeeting: true,
+          sortOrder: nextOrder++,
+        },
+      });
+    }
+  }
+
+  // Map offices to their owners (idempotent).
+  for (const [name, email] of Object.entries(OFFICE_OWNERS)) {
+    await prisma.room.updateMany({
+      where: { name, category: "Offices", ownerEmail: null },
+      data: { ownerEmail: email },
+    });
+  }
+}
+
+export async function findRoomOwnedBy(email: string): Promise<string | null> {
+  const row = await prisma.room.findFirst({
+    where: { ownerEmail: email },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+export async function isRoomEnterableBy(
+  roomId: string,
+  email: string,
+): Promise<{ ok: true } | { ok: false; reason: "locked" | "missing" }> {
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    select: { locked: true, ownerEmail: true },
+  });
+  if (!room) return { ok: false, reason: "missing" };
+  if (room.locked && room.ownerEmail !== email) return { ok: false, reason: "locked" };
+  return { ok: true };
 }
 
 export async function registerRooms(app: FastifyInstance, config: Config): Promise<void> {
@@ -123,6 +196,27 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     await prisma.room.delete({ where: { id: req.params.id } });
     return { ok: true };
   });
+
+  // Toggle the lock on an office you own.
+  app.post<{ Params: { id: string }; Body: { locked: boolean } }>(
+    "/api/rooms/:id/lock",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
+      const isOwner = room.ownerEmail === user.email;
+      if (!isOwner && !dbUser?.isAdmin) {
+        return reply.code(403).send({ error: "only the owner or an admin can lock this room" });
+      }
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { locked: !!req.body?.locked },
+      });
+      return toApi(updated);
+    },
+  );
 
   app.post<{ Body: { order: string[] } }>("/api/rooms/reorder", async (req, reply) => {
     if (!(await requireAdmin(req, reply))) return reply;

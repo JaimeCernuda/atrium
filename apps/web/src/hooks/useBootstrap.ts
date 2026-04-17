@@ -47,13 +47,38 @@ export function useBootstrap(): { loading: boolean } {
       }
 
       const socket = getSocket();
-      socket.on("presence:snapshot", setPresence);
-      socket.on("presence:enter", ({ user, roomId }) => addPresence(roomId, user));
-      socket.on("presence:leave", ({ userId, roomId }) => removePresence(roomId, userId));
+      socket.on("presence:snapshot", (state) => {
+        setPresence(state);
+        // Sync currentRoomId if the snapshot shows us placed somewhere.
+        const meId = useStore.getState().user?.id;
+        if (meId) {
+          for (const [rid, usersInRoom] of Object.entries(state)) {
+            if (usersInRoom.some((u) => u.id === meId)) {
+              useStore.getState().setCurrentRoomId(rid);
+              break;
+            }
+          }
+        }
+      });
+      socket.on("presence:enter", ({ user, roomId }) => {
+        addPresence(roomId, user);
+        const meId = useStore.getState().user?.id;
+        if (meId && user.id === meId) {
+          useStore.getState().setCurrentRoomId(roomId);
+        }
+      });
+      socket.on("presence:leave", ({ userId, roomId }) => {
+        removePresence(roomId, userId);
+        const me = useStore.getState().user;
+        if (me && userId === me.id && useStore.getState().currentRoomId === roomId) {
+          useStore.getState().setCurrentRoomId(null);
+        }
+      });
       socket.on("presence:meeting", ({ userId, inMeeting }) => setMeetingFlag(userId, inMeeting));
       socket.on("chat:global", appendGlobalMessage);
       socket.on("chat:dm", appendDmMessage);
       socket.on("ping:received", setActivePing);
+      socket.on("user:updated", (u) => useStore.getState().patchUserEverywhere(u));
       socket.connect();
 
       if (!cancelled) setLoading(false);

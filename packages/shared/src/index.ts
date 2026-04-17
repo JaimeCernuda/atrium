@@ -5,6 +5,8 @@ export interface Room {
   category?: string;
   disableMeeting?: boolean;
   externalMeetUrl?: string;
+  ownerEmail?: string;
+  locked?: boolean;
 }
 
 export interface User {
@@ -38,16 +40,23 @@ export interface PingPayload {
   roomId: string | null;
 }
 
+export interface KnockPayload {
+  from: User;
+  roomId: string;
+}
+
 export type ServerToClientEvents = {
   "presence:snapshot": (state: Record<string, PresenceUser[]>) => void;
   "presence:enter": (evt: PresenceEvent) => void;
   "presence:leave": (payload: { userId: string; roomId: string }) => void;
   "presence:meeting": (payload: { userId: string; inMeeting: boolean }) => void;
+  "user:updated": (user: User) => void;
 
   "chat:global": (message: ChatMessage) => void;
   "chat:dm": (message: ChatMessage) => void;
 
   "ping:received": (payload: PingPayload) => void;
+  "knock:received": (payload: KnockPayload) => void;
 };
 
 export type ClientToServerEvents = {
@@ -56,4 +65,5 @@ export type ClientToServerEvents = {
   "presence:meeting-end": () => void;
 
   "ping:send": (targetUserId: string) => void;
+  "knock:send": (roomId: string) => void;
 };

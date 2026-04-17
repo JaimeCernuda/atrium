@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
+import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import type { User } from "@atrium/shared";
 import { loadConfig } from "./config.js";
@@ -12,15 +13,21 @@ import { closeOrphanedSessions } from "./db.js";
 import { registerMetrics } from "./metrics.js";
 import { registerRooms, seedRoomsIfEmpty } from "./rooms.js";
 import { registerChat } from "./chat.js";
+import { registerAvatars } from "./avatars.js";
 
 const config = loadConfig();
 
 const app = Fastify({ logger: true });
 const broadcasterRef: { current: Broadcaster | null } = { current: null };
 
+const avatarDir = process.env.AVATAR_DIR ?? "/data/avatars";
+mkdirSync(avatarDir, { recursive: true });
+
 await app.register(cors, { origin: true, credentials: true });
 await app.register(cookie);
-await registerAuth(app, config);
+await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+await registerAuth(app, config, broadcasterRef);
+await registerAvatars(app, config, avatarDir, broadcasterRef);
 await registerRooms(app, config);
 await registerMetrics(app, config);
 await registerChat(app, config, broadcasterRef);
@@ -32,7 +39,8 @@ app.get("/healthz", async () => ({ ok: true }));
 app.get("/api/config", async () => ({
   brand: {
     name: process.env.BRAND_NAME ?? "Atrium",
-    logoUrl: process.env.BRAND_LOGO_URL,
+    shortName: process.env.BRAND_SHORT_NAME ?? process.env.BRAND_NAME ?? "Atrium",
+    logoUrl: process.env.BRAND_LOGO_URL ?? "/brand/gnosis-logo.png",
     accentColor: process.env.BRAND_ACCENT_COLOR ?? "#1976d2",
   },
 }));

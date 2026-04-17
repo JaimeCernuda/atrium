@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import type { ChatMessage, PingPayload, PresenceUser, Room, User } from "@atrium/shared";
+import { loadPrefs, savePrefs, type ThemeMode, type UserPrefs } from "./prefs";
 
 interface AtriumState {
-  brand: { name: string; logoUrl?: string; accentColor: string };
+  brand: { name: string; shortName?: string; logoUrl?: string; accentColor: string };
   setBrand: (b: AtriumState["brand"]) => void;
 
   user: User | null;
@@ -30,11 +31,27 @@ interface AtriumState {
 
   activePing: PingPayload | null;
   setActivePing: (p: PingPayload | null) => void;
+
+  chatOpen: boolean;
+  setChatOpen: (open: boolean) => void;
+  chatView: "global" | "dm";
+  setChatView: (v: "global" | "dm") => void;
+  activeDmUser: User | null;
+  openDmWith: (user: User) => void;
+  closeDm: () => void;
+
+  patchUserEverywhere: (user: User) => void;
+
+  prefs: UserPrefs;
+  setThemeMode: (mode: ThemeMode) => void;
+  setNotificationsEnabled: (enabled: boolean) => void;
+  setSoundsEnabled: (enabled: boolean) => void;
+  setGlobalChatSoundEnabled: (enabled: boolean) => void;
 }
 
 const LIMIT = 200;
 
-export const useStore = create<AtriumState>((set, get) => ({
+export const useStore = create<AtriumState>((set) => ({
   brand: { name: "Atrium", accentColor: "#1976d2" },
   setBrand: (brand) => set({ brand }),
 
@@ -100,8 +117,65 @@ export const useStore = create<AtriumState>((set, get) => ({
 
   activePing: null,
   setActivePing: (activePing) => set({ activePing }),
+
+  chatOpen: false,
+  setChatOpen: (chatOpen) => set({ chatOpen }),
+  chatView: "global",
+  setChatView: (chatView) => set({ chatView }),
+  activeDmUser: null,
+  openDmWith: (u) => set({ chatOpen: true, chatView: "dm", activeDmUser: u }),
+  closeDm: () => set({ activeDmUser: null }),
+
+  patchUserEverywhere: (u) =>
+    set((state) => ({
+      user: state.user?.id === u.id ? { ...state.user, ...u } : state.user,
+      presence: Object.fromEntries(
+        Object.entries(state.presence).map(([rid, users]) => [
+          rid,
+          users.map((pu) => (pu.id === u.id ? { ...pu, name: u.name, imageUrl: u.imageUrl } : pu)),
+        ]),
+      ),
+      globalMessages: state.globalMessages.map((m) =>
+        m.sender.id === u.id ? { ...m, sender: { ...m.sender, name: u.name, imageUrl: u.imageUrl } } : m,
+      ),
+      dmByUser: Object.fromEntries(
+        Object.entries(state.dmByUser).map(([uid, msgs]) => [
+          uid,
+          msgs.map((m) =>
+            m.sender.id === u.id ? { ...m, sender: { ...m.sender, name: u.name, imageUrl: u.imageUrl } } : m,
+          ),
+        ]),
+      ),
+    })),
+
+  prefs: loadPrefs(),
+  setThemeMode: (mode) =>
+    set((state) => {
+      const next = { ...state.prefs, themeMode: mode };
+      savePrefs(next);
+      return { prefs: next };
+    }),
+  setNotificationsEnabled: (enabled) =>
+    set((state) => {
+      const next = { ...state.prefs, notificationsEnabled: enabled };
+      savePrefs(next);
+      return { prefs: next };
+    }),
+  setSoundsEnabled: (enabled) =>
+    set((state) => {
+      const next = { ...state.prefs, soundsEnabled: enabled };
+      savePrefs(next);
+      return { prefs: next };
+    }),
+  setGlobalChatSoundEnabled: (enabled) =>
+    set((state) => {
+      const next = { ...state.prefs, globalChatSoundEnabled: enabled };
+      savePrefs(next);
+      return { prefs: next };
+    }),
 }));
 
-export function currentUser(): User | null {
-  return useStore.getState().user;
+// Helper for consumers that aren't React components
+export function getState(): ReturnType<typeof useStore.getState> {
+  return useStore.getState();
 }

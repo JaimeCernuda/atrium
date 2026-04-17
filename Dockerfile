@@ -17,6 +17,7 @@ COPY packages/shared/src ./packages/shared/src
 COPY apps/server/src ./apps/server/src
 COPY apps/server/prisma ./apps/server/prisma
 COPY apps/web/src ./apps/web/src
+COPY apps/web/public ./apps/web/public
 
 RUN cd apps/server && pnpm exec prisma generate
 RUN pnpm build

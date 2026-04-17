@@ -7,7 +7,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8091:8090"
+      - "8070:8090"
     env_file:
       - .env
     environment:
@@ -15,6 +15,7 @@ services:
       - DATABASE_URL=postgresql://atrium:atrium@postgres:5432/atrium
     volumes:
       - ./config:/config:ro
+      - atrium-avatars:/data/avatars
 
   postgres:
     image: postgres:16-alpine
@@ -34,3 +35,4 @@ services:
 
 volumes:
   atrium-pgdata:
+  atrium-avatars:

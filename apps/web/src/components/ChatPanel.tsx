@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Avatar,
   Box,
+  Button,
   Drawer,
   IconButton,
   List,
@@ -15,15 +16,12 @@ import {
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
 import CloseIcon from "@mui/icons-material/Close";
+import AddIcon from "@mui/icons-material/Add";
 import type { ChatMessage, User } from "@atrium/shared";
 import { useStore } from "../store";
+import { UserSearchDialog } from "./UserSearchDialog";
 
 const DRAWER_WIDTH = 360;
-
-interface Props {
-  open: boolean;
-  onClose: () => void;
-}
 
 interface Conversation {
   user: User;
@@ -31,15 +29,27 @@ interface Conversation {
   lastMessagePreview: string;
 }
 
-export function ChatPanel({ open, onClose }: Props) {
-  const [tab, setTab] = useState<"global" | "dm">("global");
-  const [activeDmUser, setActiveDmUser] = useState<User | null>(null);
+export function ChatPanel() {
+  const open = useStore((s) => s.chatOpen);
+  const setChatOpen = useStore((s) => s.setChatOpen);
+  const tab = useStore((s) => s.chatView);
+  const setTab = useStore((s) => s.setChatView);
+  const activeDmUser = useStore((s) => s.activeDmUser);
+  const closeDm = useStore((s) => s.closeDm);
+  const openDmWith = useStore((s) => s.openDmWith);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
   const me = useStore((s) => s.user);
   const globalMessages = useStore((s) => s.globalMessages);
   const dmByUser = useStore((s) => s.dmByUser);
   const setDmMessages = useStore((s) => s.setDmMessages);
   const appendDmMessage = useStore((s) => s.appendDmMessage);
+
+  const onClose = () => setChatOpen(false);
+  const setActiveDmUser = (u: User | null) => {
+    if (u) openDmWith(u);
+    else closeDm();
+  };
 
   const fetchConversations = () => {
     fetch("/api/chat/dm/conversations", { credentials: "include" })
@@ -108,12 +118,22 @@ export function ChatPanel({ open, onClose }: Props) {
 
       {tab === "dm" && !activeDmUser ? (
         <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
+          <Box sx={{ p: 1.5 }}>
+            <Button
+              fullWidth
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setSearchOpen(true)}
+            >
+              New message
+            </Button>
+          </Box>
           <List dense>
             {conversations.length === 0 && (
-              <Box sx={{ p: 2 }}>
+              <Box sx={{ px: 2, pb: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                  No direct messages yet. Use the ping button on a user&apos;s avatar in a room, or
-                  click their name below.
+                  No direct messages yet. Click <strong>New message</strong> to start one,
+                  or tap any user&apos;s avatar on a room card.
                 </Typography>
               </Box>
             )}
@@ -135,12 +155,20 @@ export function ChatPanel({ open, onClose }: Props) {
               </ListItemButton>
             ))}
           </List>
+          <UserSearchDialog
+            open={searchOpen}
+            onClose={() => setSearchOpen(false)}
+            onPick={(u) => {
+              setSearchOpen(false);
+              setActiveDmUser(u);
+            }}
+          />
         </Box>
       ) : (
         <>
           {tab === "dm" && activeDmUser && (
             <Stack direction="row" alignItems="center" sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
-              <IconButton size="small" onClick={() => setActiveDmUser(null)}>
+              <IconButton size="small" onClick={closeDm}>
                 <CloseIcon fontSize="small" />
               </IconButton>
               <Avatar src={activeDmUser.imageUrl} sx={{ width: 24, height: 24, mx: 1 }}>
