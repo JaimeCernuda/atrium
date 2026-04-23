@@ -89,17 +89,19 @@ model Digest {
 }
 
 model Reminder {
-  id          String   @id @default(cuid())
-  title       String
-  body        String?
-  dueAt       DateTime
-  category    String   @default("other")
-  createdById String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(cuid())
+  title          String
+  body           String?
+  dueAt          DateTime
+  category       String   @default("other")
+  createdById    String?
+  createdByBotId String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@index([dueAt])
   @@index([createdById])
+  @@index([createdByBotId])
 }
 
 model BotToken {

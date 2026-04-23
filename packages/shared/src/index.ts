@@ -67,8 +67,10 @@ export interface Reminder {
   body: string | null;
   dueAt: string;
   category: ReminderCategory;
-  createdById: string;
+  createdById: string | null;
+  createdByBotId: string | null;
   createdByName: string;
+  createdByBot: boolean;
   createdAt: string;
 }
 

@@ -4,6 +4,12 @@ import { prisma } from "./db.js";
 
 const TOKEN_PREFIX = "atrbot_";
 
+/** True if the request is carrying a bot-token Bearer header (any token). */
+export function hasBotBearer(req: FastifyRequest): boolean {
+  const header = req.headers.authorization;
+  return Boolean(header?.startsWith(`Bearer ${TOKEN_PREFIX}`));
+}
+
 export function generateBotToken(): { plaintext: string; hash: string } {
   const raw = randomBytes(24).toString("base64url");
   const plaintext = `${TOKEN_PREFIX}${raw}`;

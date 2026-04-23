@@ -26,7 +26,11 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import type { BotTokenCreated, BotTokenInfo } from "@atrium/shared";
 
-const AVAILABLE_SCOPES = ["digest:write"] as const;
+const AVAILABLE_SCOPES = [
+  "digest:write",
+  "reminders:read",
+  "reminders:write",
+] as const;
 
 function formatWhen(iso: string | null): string {
   if (!iso) return "—";

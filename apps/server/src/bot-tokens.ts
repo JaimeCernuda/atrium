@@ -5,7 +5,11 @@ import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
 import { generateBotToken } from "./bot-auth.js";
 
-const ALLOWED_SCOPES = new Set(["digest:write"]);
+const ALLOWED_SCOPES = new Set([
+  "digest:write",
+  "reminders:read",
+  "reminders:write",
+]);
 
 async function verifyAdmin(userId: string, reply: FastifyReply): Promise<boolean> {
   const row = await prisma.user.findUnique({ where: { id: userId }, select: { isAdmin: true } });

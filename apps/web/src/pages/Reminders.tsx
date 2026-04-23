@@ -19,6 +19,10 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import SmartToyIcon from "@mui/icons-material/SmartToy";
+import FilterAltIcon from "@mui/icons-material/FilterAlt";
+import FilterAltOffIcon from "@mui/icons-material/FilterAltOff";
+import Tooltip from "@mui/material/Tooltip";
 import type { Reminder, ReminderCategory } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
 import { useStore } from "../store";
@@ -65,6 +69,7 @@ export function Reminders() {
   const [dialogState, setDialogState] = useState<
     { mode: "create" } | { mode: "edit"; reminder: Reminder } | null
   >(null);
+  const [hideBots, setHideBots] = useState(false);
 
   const load = () => {
     fetch("/api/reminders?scope=upcoming", { credentials: "include" })
@@ -80,8 +85,13 @@ export function Reminders() {
     load();
   }, []);
 
-  const grouped = useMemo(() => {
+  const visibleItems = useMemo(() => {
     if (!items) return null;
+    return hideBots ? items.filter((r) => !r.createdByBot) : items;
+  }, [items, hideBots]);
+
+  const grouped = useMemo(() => {
+    if (!visibleItems) return null;
     const now = new Date();
     const buckets: Record<ReturnType<typeof groupKey>, Reminder[]> = {
       overdue: [],
@@ -89,9 +99,11 @@ export function Reminders() {
       "next-week": [],
       later: [],
     };
-    for (const r of items) buckets[groupKey(r.dueAt, now)].push(r);
+    for (const r of visibleItems) buckets[groupKey(r.dueAt, now)].push(r);
     return buckets;
-  }, [items]);
+  }, [visibleItems]);
+
+  const botCount = items?.filter((r) => r.createdByBot).length ?? 0;
 
   const onDelete = async (id: string) => {
     await fetch(`/api/reminders/${id}`, { method: "DELETE", credentials: "include" });
@@ -101,10 +113,28 @@ export function Reminders() {
   return (
     <AppShell>
       <Container maxWidth="md" sx={{ py: 3 }}>
-        <Stack direction="row" alignItems="center" sx={{ mb: 2 }}>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
           <Typography variant="h5" sx={{ fontWeight: 600, flexGrow: 1 }}>
             Reminders
           </Typography>
+          {botCount > 0 && (
+            <Tooltip
+              title={
+                hideBots
+                  ? `Showing only user reminders (${botCount} bot-posted hidden)`
+                  : `Hide ${botCount} bot-posted reminder${botCount === 1 ? "" : "s"}`
+              }
+            >
+              <IconButton
+                size="small"
+                onClick={() => setHideBots((v) => !v)}
+                aria-label="Toggle bot reminders"
+                color={hideBots ? "primary" : "default"}
+              >
+                {hideBots ? <FilterAltIcon /> : <FilterAltOffIcon />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -142,8 +172,14 @@ export function Reminders() {
                 </Typography>
                 <Stack spacing={1} sx={{ mt: 0.5 }}>
                   {list.map((r) => {
+                    // Bot-posted reminders are community-maintained — any
+                    // logged-in user can fix/delete them. User-posted are
+                    // author-or-admin only.
                     const canMutate = Boolean(
-                      user && (user.id === r.createdById || user.isAdmin),
+                      user &&
+                        (user.isAdmin ||
+                          r.createdByBot ||
+                          user.id === r.createdById),
                     );
                     return (
                       <ReminderRow
@@ -196,6 +232,14 @@ function ReminderRow({ reminder, canMutate, onEdit, onDelete }: RowProps) {
     >
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
         <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.25 }}>
+          {reminder.createdByBot && (
+            <Tooltip title={`Posted by bot: ${reminder.createdByName}`}>
+              <SmartToyIcon
+                fontSize="small"
+                sx={{ color: "text.secondary", flexShrink: 0 }}
+              />
+            </Tooltip>
+          )}
           <Typography variant="subtitle2" sx={{ fontWeight: 600 }} noWrap>
             {reminder.title}
           </Typography>
@@ -213,6 +257,7 @@ function ReminderRow({ reminder, canMutate, onEdit, onDelete }: RowProps) {
         </Stack>
         <Typography variant="caption" color="text.secondary">
           {formatDue(reminder.dueAt)} · by {reminder.createdByName}
+          {reminder.createdByBot && " (bot)"}
         </Typography>
         {reminder.body && (
           <Typography variant="body2" sx={{ mt: 0.75, whiteSpace: "pre-wrap" }}>
