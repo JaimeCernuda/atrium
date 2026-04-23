@@ -45,6 +45,45 @@ export interface KnockPayload {
   roomId: string;
 }
 
+export interface DigestSummary {
+  date: string;
+  title: string | null;
+  createdAt: string;
+}
+
+export interface Digest {
+  date: string;
+  markdown: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReminderCategory = "deadline" | "event" | "admin" | "other";
+
+export interface Reminder {
+  id: string;
+  title: string;
+  body: string | null;
+  dueAt: string;
+  category: ReminderCategory;
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+}
+
+export interface BotTokenInfo {
+  id: string;
+  name: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface BotTokenCreated extends BotTokenInfo {
+  token: string;
+}
+
 export type ServerToClientEvents = {
   "presence:snapshot": (state: Record<string, PresenceUser[]>) => void;
   "presence:enter": (evt: PresenceEvent) => void;

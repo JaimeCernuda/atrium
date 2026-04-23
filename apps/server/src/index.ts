@@ -14,6 +14,9 @@ import { registerMetrics } from "./metrics.js";
 import { registerRooms, seedRoomsIfEmpty } from "./rooms.js";
 import { registerChat } from "./chat.js";
 import { registerAvatars } from "./avatars.js";
+import { registerDigest } from "./digest.js";
+import { registerReminders } from "./reminders.js";
+import { registerBotTokens } from "./bot-tokens.js";
 
 const config = loadConfig();
 
@@ -31,6 +34,9 @@ await registerAvatars(app, config, avatarDir, broadcasterRef);
 await registerRooms(app, config);
 await registerMetrics(app, config);
 await registerChat(app, config, broadcasterRef);
+await registerDigest(app, config);
+await registerReminders(app, config);
+await registerBotTokens(app, config);
 await seedRoomsIfEmpty(config.rooms);
 await closeOrphanedSessions();
 

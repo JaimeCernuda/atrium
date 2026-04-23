@@ -75,3 +75,41 @@ model Message {
   @@index([recipientId, createdAt])
   @@index([roomId, createdAt])
 }
+
+model Digest {
+  id        String   @id @default(cuid())
+  date      DateTime @unique @db.Date
+  markdown  String
+  title     String?
+  authorId  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([date])
+}
+
+model Reminder {
+  id          String   @id @default(cuid())
+  title       String
+  body        String?
+  dueAt       DateTime
+  category    String   @default("other")
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([dueAt])
+  @@index([createdById])
+}
+
+model BotToken {
+  id         String    @id @default(cuid())
+  name       String
+  tokenHash  String    @unique
+  scopes     String[]
+  createdAt  DateTime  @default(now())
+  createdBy  String
+  lastUsedAt DateTime?
+
+  @@index([tokenHash])
+}

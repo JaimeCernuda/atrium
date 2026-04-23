@@ -1,34 +1,31 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  AppBar,
-  Box,
-  Button,
   CircularProgress,
   CssBaseline,
   Stack,
   ThemeProvider,
-  Toolbar,
-  Typography,
   createTheme,
   lighten,
 } from "@mui/material";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { useStore } from "./store";
 import { useBootstrap } from "./hooks/useBootstrap";
 import { Login } from "./pages/Login";
 import { Office } from "./pages/Office";
 import { Metrics } from "./pages/Metrics";
 import { AdminRooms } from "./pages/AdminRooms";
+import { AdminBotTokens } from "./pages/AdminBotTokens";
+import { DigestList } from "./pages/Digest/List";
+import { DigestDay } from "./pages/Digest/Day";
+import { Reminders } from "./pages/Reminders";
+import { AppShell } from "./components/AppShell";
 import { resolveMode } from "./prefs";
-
-type Route = "office" | "metrics" | "rooms";
 
 export function App() {
   const { loading } = useBootstrap();
   const user = useStore((s) => s.user);
   const brand = useStore((s) => s.brand);
   const themeMode = useStore((s) => s.prefs.themeMode);
-  const [route, setRoute] = useState<Route>("office");
   const [systemTick, setSystemTick] = useState(0);
 
   useEffect(() => {
@@ -87,26 +84,46 @@ export function App() {
         </Stack>
       ) : !user ? (
         <Login />
-      ) : route === "office" ? (
-        <Office
-          onViewMetrics={user.isAdmin ? () => setRoute("metrics") : undefined}
-          onViewRooms={user.isAdmin ? () => setRoute("rooms") : undefined}
-        />
       ) : (
-        <Box>
-          <AppBar position="sticky" color="default">
-            <Toolbar>
-              <Button startIcon={<ArrowBackIcon />} onClick={() => setRoute("office")}>
-                Back to office
-              </Button>
-              <Typography variant="h6" sx={{ ml: 2 }}>
-                {brand.name} — {route === "metrics" ? "Metrics" : "Rooms"}
-              </Typography>
-            </Toolbar>
-          </AppBar>
-          {route === "metrics" && <Metrics />}
-          {route === "rooms" && <AdminRooms />}
-        </Box>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Office />} />
+            <Route path="/digest" element={<DigestList />} />
+            <Route path="/digest/:date" element={<DigestDay />} />
+            <Route path="/reminders" element={<Reminders />} />
+            {user.isAdmin && (
+              <Route
+                path="/admin/metrics"
+                element={
+                  <AppShell>
+                    <Metrics />
+                  </AppShell>
+                }
+              />
+            )}
+            {user.isAdmin && (
+              <Route
+                path="/admin/rooms"
+                element={
+                  <AppShell>
+                    <AdminRooms />
+                  </AppShell>
+                }
+              />
+            )}
+            {user.isAdmin && (
+              <Route
+                path="/admin/bot-tokens"
+                element={
+                  <AppShell>
+                    <AdminBotTokens />
+                  </AppShell>
+                }
+              />
+            )}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
       )}
     </ThemeProvider>
   );
