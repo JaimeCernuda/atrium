@@ -18,6 +18,7 @@ export interface Config {
   port: number;
   publicUrl: string;
   rooms: Room[];
+  defaultRoomId: string | null;
   whitelistDomains: string[];
   adminEmails: string[];
   google: GoogleProviderConfig | null;
@@ -72,16 +73,26 @@ function loadMicrosoft(): MicrosoftProviderConfig | null {
   };
 }
 
+function pickDefaultRoom(rooms: Room[]): string | null {
+  // Explicit env override wins.
+  if (process.env.DEFAULT_ROOM_ID) return process.env.DEFAULT_ROOM_ID;
+  // Otherwise match a room whose name case-insensitively starts with "lobby".
+  const lobby = rooms.find((r) => r.name.toLowerCase().startsWith("lobby"));
+  return lobby?.id ?? null;
+}
+
 export function loadConfig(): Config {
   const google = loadGoogle();
   const microsoft = loadMicrosoft();
   if (!google && !microsoft) {
     throw new Error("At least one auth provider must be configured (GOOGLE_* or MICROSOFT_*)");
   }
+  const rooms = loadRooms(process.env.ROOMS_FILE);
   return {
     port: Number(process.env.PORT ?? 8090),
     publicUrl: process.env.PUBLIC_URL ?? "http://localhost:5173",
-    rooms: loadRooms(process.env.ROOMS_FILE),
+    rooms,
+    defaultRoomId: pickDefaultRoom(rooms),
     whitelistDomains: parseWhitelist(process.env.WHITELIST_DOMAINS),
     adminEmails: parseWhitelist(process.env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
     google,

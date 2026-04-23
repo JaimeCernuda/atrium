@@ -6,6 +6,9 @@ interface AtriumState {
   brand: { name: string; shortName?: string; logoUrl?: string; accentColor: string };
   setBrand: (b: AtriumState["brand"]) => void;
 
+  defaultRoomId: string | null;
+  setDefaultRoomId: (id: string | null) => void;
+
   user: User | null;
   setUser: (u: User | null) => void;
 
@@ -54,6 +57,9 @@ const LIMIT = 200;
 export const useStore = create<AtriumState>((set) => ({
   brand: { name: "Atrium", accentColor: "#1976d2" },
   setBrand: (brand) => set({ brand }),
+
+  defaultRoomId: null,
+  setDefaultRoomId: (id) => set({ defaultRoomId: id }),
 
   user: null,
   setUser: (user) => set({ user }),

@@ -49,6 +49,7 @@ app.get("/api/config", async () => ({
     logoUrl: process.env.BRAND_LOGO_URL ?? "/brand/gnosis-logo.png",
     accentColor: process.env.BRAND_ACCENT_COLOR ?? "#1976d2",
   },
+  defaultRoomId: config.defaultRoomId,
 }));
 
 const staticRoot = process.env.WEB_DIST ?? resolve(process.cwd(), "../web/dist");

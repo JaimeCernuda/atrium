@@ -6,6 +6,7 @@ import { getSocket } from "../socket";
 export function useBootstrap(): { loading: boolean } {
   const [loading, setLoading] = useState(true);
   const setBrand = useStore((s) => s.setBrand);
+  const setDefaultRoomId = useStore((s) => s.setDefaultRoomId);
   const setUser = useStore((s) => s.setUser);
   const setRooms = useStore((s) => s.setRooms);
   const setPresence = useStore((s) => s.setPresence);
@@ -23,8 +24,12 @@ export function useBootstrap(): { loading: boolean } {
     (async () => {
       const brandRes = await fetch("/api/config");
       if (brandRes.ok && !cancelled) {
-        const body = (await brandRes.json()) as { brand: ReturnType<typeof useStore.getState>["brand"] };
+        const body = (await brandRes.json()) as {
+          brand: ReturnType<typeof useStore.getState>["brand"];
+          defaultRoomId: string | null;
+        };
         setBrand(body.brand);
+        setDefaultRoomId(body.defaultRoomId ?? null);
       }
 
       const meRes = await fetch("/api/me", { credentials: "include" });
@@ -51,13 +56,24 @@ export function useBootstrap(): { loading: boolean } {
         setPresence(state);
         // Sync currentRoomId if the snapshot shows us placed somewhere.
         const meId = useStore.getState().user?.id;
+        let placed = false;
         if (meId) {
           for (const [rid, usersInRoom] of Object.entries(state)) {
             if (usersInRoom.some((u) => u.id === meId)) {
               useStore.getState().setCurrentRoomId(rid);
+              placed = true;
               break;
             }
           }
+        }
+        // If we're logged in but not in any room, auto-join the default
+        // (Lobby). Matches the real-office metaphor: logging in = walking
+        // in the door. Safe to re-run; server ignores joins for the room
+        // you're already in.
+        const defaultRoomId = useStore.getState().defaultRoomId;
+        if (!placed && meId && defaultRoomId) {
+          socket.emit("presence:join", defaultRoomId);
+          useStore.getState().setCurrentRoomId(defaultRoomId);
         }
       });
       socket.on("presence:enter", ({ user, roomId }) => {

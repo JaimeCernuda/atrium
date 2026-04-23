@@ -130,4 +130,87 @@ export async function registerMetrics(app: FastifyInstance, config: Config): Pro
     ]);
     return { users, activeSessions, activeMeetings };
   });
+
+  app.get("/api/metrics/users", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return reply;
+    const users = await prisma.user.findMany({
+      orderBy: [{ isAdmin: "desc" }, { name: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        imageUrl: true,
+        isAdmin: true,
+        createdAt: true,
+        lastSeenAt: true,
+      },
+    });
+    return {
+      rows: users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        imageUrl: u.imageUrl ?? null,
+        isAdmin: u.isAdmin,
+        createdAt: u.createdAt.toISOString(),
+        lastSeenAt: u.lastSeenAt?.toISOString() ?? null,
+      })),
+    };
+  });
+
+  app.get("/api/metrics/active-sessions", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return reply;
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        userId: string;
+        userName: string;
+        userEmail: string;
+        imageUrl: string | null;
+        roomId: string;
+        joinedAt: Date;
+      }>
+    >`
+      SELECT ps.id, ps."userId", u.name AS "userName", u.email AS "userEmail",
+             u."imageUrl", ps."roomId", ps."joinedAt"
+      FROM "PresenceSession" ps
+      JOIN "User" u ON u.id = ps."userId"
+      WHERE ps."leftAt" IS NULL
+      ORDER BY ps."joinedAt" DESC
+    `;
+    return {
+      rows: rows.map((r) => ({
+        ...r,
+        joinedAt: r.joinedAt.toISOString(),
+      })),
+    };
+  });
+
+  app.get("/api/metrics/active-meetings", async (req, reply) => {
+    if (!(await requireAdmin(req, reply))) return reply;
+    const rows = await prisma.$queryRaw<
+      Array<{
+        id: string;
+        userId: string;
+        userName: string;
+        userEmail: string;
+        imageUrl: string | null;
+        roomId: string;
+        startedAt: Date;
+      }>
+    >`
+      SELECT ms.id, ms."userId", u.name AS "userName", u.email AS "userEmail",
+             u."imageUrl", ms."roomId", ms."startedAt"
+      FROM "MeetingSession" ms
+      JOIN "User" u ON u.id = ms."userId"
+      WHERE ms."endedAt" IS NULL
+      ORDER BY ms."startedAt" DESC
+    `;
+    return {
+      rows: rows.map((r) => ({
+        ...r,
+        startedAt: r.startedAt.toISOString(),
+      })),
+    };
+  });
 }
