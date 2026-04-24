@@ -35,16 +35,6 @@ function adjacentDates(list: DigestSummary[], current: string): { prev?: string;
   };
 }
 
-function formatLong(iso: string): string {
-  const d = new Date(`${iso}T00:00:00`);
-  return d.toLocaleDateString(undefined, {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
-
 export function DigestDay() {
   const { date } = useParams<{ date: string }>();
   const [searchParams] = useSearchParams();
@@ -227,12 +217,6 @@ export function DigestDay() {
               </Stack>
             </Box>
           </Collapse>
-        )}
-
-        {date && (
-          <Typography variant="overline" color="text.secondary">
-            {formatLong(date)}
-          </Typography>
         )}
 
         {error && (
