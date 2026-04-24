@@ -57,6 +57,7 @@ export interface Digest {
   title: string | null;
   createdAt: string;
   updatedAt: string;
+  shareToken?: string;
 }
 
 export type ReminderCategory = "deadline" | "event" | "admin" | "other";

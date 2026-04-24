@@ -22,19 +22,24 @@ function extractTitle(md: string): string | null {
   return match?.[1]?.trim() ?? null;
 }
 
-function toApi(row: {
-  date: Date;
-  markdown: string;
-  title: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}): Digest {
+function toApi(
+  row: {
+    date: Date;
+    markdown: string;
+    title: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+    shareToken: string;
+  },
+  includeToken: boolean,
+): Digest {
   return {
     date: formatDate(row.date),
     markdown: row.markdown,
     title: row.title,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    ...(includeToken ? { shareToken: row.shareToken } : {}),
   };
 }
 
@@ -71,18 +76,28 @@ export async function registerDigest(app: FastifyInstance, config: Config): Prom
     },
   );
 
-  app.get<{ Params: { date: string } }>("/api/digest/:date", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
-    if (!user) return;
+  app.get<{ Params: { date: string }; Querystring: { t?: string } }>(
+    "/api/digest/:date",
+    async (req, reply) => {
+      const date = parseDate(req.params.date);
+      if (!date) return reply.code(400).send({ error: "invalid_date" });
 
-    const date = parseDate(req.params.date);
-    if (!date) return reply.code(400).send({ error: "invalid_date" });
+      const row = await prisma.digest.findUnique({ where: { date } });
+      if (!row) return reply.code(404).send({ error: "not_found" });
 
-    const row = await prisma.digest.findUnique({ where: { date } });
-    if (!row) return reply.code(404).send({ error: "not_found" });
+      const token = req.query.t;
+      const tokenMatches = typeof token === "string" && token === row.shareToken;
 
-    return reply.send(toApi(row));
-  });
+      let includeToken = false;
+      if (!tokenMatches) {
+        const user = await requireUser(req, reply, config.session.cookieName);
+        if (!user) return;
+        includeToken = true;
+      }
+
+      return reply.send(toApi(row, includeToken));
+    },
+  );
 
   app.post<{ Body: { date?: string; markdown?: string } }>(
     "/api/digest",
@@ -108,7 +123,7 @@ export async function registerDigest(app: FastifyInstance, config: Config): Prom
         update: { markdown, title },
       });
 
-      return reply.send(toApi(row));
+      return reply.send(toApi(row, true));
     },
   );
 

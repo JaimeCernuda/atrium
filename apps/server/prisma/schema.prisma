@@ -77,13 +77,14 @@ model Message {
 }
 
 model Digest {
-  id        String   @id @default(cuid())
-  date      DateTime @unique @db.Date
-  markdown  String
-  title     String?
-  authorId  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  date       DateTime @unique @db.Date
+  markdown   String
+  title      String?
+  authorId   String?
+  shareToken String   @unique @default(cuid())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([date])
 }

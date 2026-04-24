@@ -82,46 +82,52 @@ export function App() {
         <Stack sx={{ minHeight: "100vh" }} alignItems="center" justifyContent="center">
           <CircularProgress />
         </Stack>
-      ) : !user ? (
-        <Login />
       ) : (
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Office />} />
-            <Route path="/digest" element={<DigestList />} />
+            {/* Public-capable: DigestDay works with a share token even when !user. */}
             <Route path="/digest/:date" element={<DigestDay />} />
-            <Route path="/reminders" element={<Reminders />} />
-            {user.isAdmin && (
-              <Route
-                path="/admin/metrics"
-                element={
-                  <AppShell>
-                    <Metrics />
-                  </AppShell>
-                }
-              />
+
+            {!user ? (
+              <Route path="*" element={<Login />} />
+            ) : (
+              <>
+                <Route path="/" element={<Office />} />
+                <Route path="/digest" element={<DigestList />} />
+                <Route path="/reminders" element={<Reminders />} />
+                {user.isAdmin && (
+                  <Route
+                    path="/admin/metrics"
+                    element={
+                      <AppShell>
+                        <Metrics />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {user.isAdmin && (
+                  <Route
+                    path="/admin/rooms"
+                    element={
+                      <AppShell>
+                        <AdminRooms />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {user.isAdmin && (
+                  <Route
+                    path="/admin/bot-tokens"
+                    element={
+                      <AppShell>
+                        <AdminBotTokens />
+                      </AppShell>
+                    }
+                  />
+                )}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </>
             )}
-            {user.isAdmin && (
-              <Route
-                path="/admin/rooms"
-                element={
-                  <AppShell>
-                    <AdminRooms />
-                  </AppShell>
-                }
-              />
-            )}
-            {user.isAdmin && (
-              <Route
-                path="/admin/bot-tokens"
-                element={
-                  <AppShell>
-                    <AdminBotTokens />
-                  </AppShell>
-                }
-              />
-            )}
-            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
       )}
