@@ -1,3 +1,36 @@
+export interface OfficeLink {
+  id: string;
+  label: string;
+  url: string;
+}
+
+export interface OfficeDecoration {
+  // Background
+  bgColor?: string;
+  bgGradient?: { from: string; to: string; angle?: number };
+  bgPattern?: "dots" | "stripes" | "grid";
+
+  // Border
+  accentColor?: string;
+  borderStyle?: "solid" | "dashed" | "dotted";
+  borderWidth?: 2 | 4 | 6;
+  glow?: boolean;
+
+  // Labels
+  emoji?: string;
+  badge?: string;
+  badgeColor?: string;
+  motto?: string;
+
+  // Room name styling
+  nameColor?: string;
+  nameUppercase?: boolean;
+  nameItalic?: boolean;
+
+  // Pinned links (max 8)
+  links?: OfficeLink[];
+}
+
 export interface Room {
   id: string;
   name: string;
@@ -7,6 +40,7 @@ export interface Room {
   externalMeetUrl?: string;
   ownerEmail?: string;
   locked?: boolean;
+  decorations?: OfficeDecoration;
 }
 
 export interface User {

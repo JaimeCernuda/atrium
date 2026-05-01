@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   Card,
+  Chip,
   IconButton,
   Menu,
   MenuItem,
@@ -20,10 +21,13 @@ import CheckIcon from "@mui/icons-material/Check";
 import DoorbellIcon from "@mui/icons-material/Doorbell";
 import LockIcon from "@mui/icons-material/Lock";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
+import PaletteIcon from "@mui/icons-material/Palette";
 import { useStore } from "../store";
 import { useState } from "react";
 import type { PresenceUser, Room } from "@atrium/shared";
 import { getSocket } from "../socket";
+import { OfficeDecorateDialog } from "./OfficeDecorateDialog";
+import { buildCardBg, buildBorderSx, LINK_ICON } from "./officeDecoUtils";
 
 interface Props {
   room: Room;
@@ -35,6 +39,7 @@ interface Props {
 
 export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Props) {
   const [menuState, setMenuState] = useState<{ anchor: HTMLElement; user: PresenceUser } | null>(null);
+  const [decorateOpen, setDecorateOpen] = useState(false);
   const me = useStore((s) => s.user);
   const setRooms = useStore((s) => s.setRooms);
   const rooms = useStore((s) => s.rooms);
@@ -42,6 +47,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   const isOwner = !!me?.email && room.ownerEmail === me.email;
   const locked = !!room.locked;
   const canEnter = !locked || isOwner;
+  const deco = room.decorations;
 
   const openMeeting = () => {
     if (!room.externalMeetUrl) return;
@@ -80,16 +86,23 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   };
 
   return (
+    <>
     <Card
       variant="outlined"
       sx={{
-        borderLeft: room.color ? `4px solid ${room.color}` : undefined,
+        ...buildBorderSx(deco ?? {}),
+        ...(deco ? buildCardBg(deco) : {}),
+        // keep fallback color border if no accent set
+        ...(!deco?.accentColor && room.color ? { borderLeft: `4px solid ${room.color}` } : {}),
         borderRadius: 1.5,
         outline: isCurrent ? `2px solid` : "none",
         outlineColor: "primary.main",
         p: 1,
         transition: "border-color 120ms ease, box-shadow 120ms ease",
-        "&:hover": { boxShadow: 2 },
+        boxShadow: deco?.glow
+          ? `0 0 14px 3px ${(deco.accentColor ?? room.color ?? "#7b1fa2")}55`
+          : undefined,
+        "&:hover": { boxShadow: deco?.glow ? undefined : 2 },
       }}
     >
       <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
@@ -99,14 +112,33 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
               <LockIcon fontSize="small" sx={{ color: "text.secondary" }} />
             </Tooltip>
           )}
+          {deco?.emoji && (
+            <Typography sx={{ fontSize: 15, lineHeight: 1, flexShrink: 0 }}>{deco.emoji}</Typography>
+          )}
           <Typography
             variant="body2"
-            sx={{ fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            sx={{
+              fontWeight: 600,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: deco?.nameColor || undefined,
+              fontStyle: deco?.nameItalic ? "italic" : undefined,
+              textTransform: deco?.nameUppercase ? "uppercase" : undefined,
+            }}
           >
             {room.name}
           </Typography>
         </Stack>
         <Stack direction="row" spacing={0}>
+          {isOwner && (
+            <Tooltip title="Decorate your office">
+              <IconButton size="small" onClick={() => setDecorateOpen(true)}>
+                <PaletteIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
           {isOwner && (
             <Tooltip title={locked ? "Unlock office" : "Lock office (only you can enter; others must knock)"}>
               <IconButton size="small" onClick={toggleLock} color={locked ? "warning" : "default"}>
@@ -143,6 +175,35 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           )}
         </Stack>
       </Stack>
+
+      {/* Motto line */}
+      {deco?.motto && (
+        <Typography
+          variant="caption"
+          sx={{ display: "block", fontStyle: "italic", color: "text.secondary", mt: 0.25, lineHeight: 1.3 }}
+        >
+          {deco.motto}
+        </Typography>
+      )}
+
+      {/* Badge pill */}
+      {deco?.badge && (
+        <Box
+          sx={{
+            display: "inline-block",
+            mt: 0.5,
+            px: 0.75,
+            py: 0.125,
+            borderRadius: 999,
+            bgcolor: deco.badgeColor ?? "#7b1fa2",
+            color: "#fff",
+          }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 600, fontSize: 10 }}>
+            {deco.badge}
+          </Typography>
+        </Box>
+      )}
 
       <Box
         sx={{
@@ -208,6 +269,26 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
         )}
       </Box>
 
+      {/* Pinned links row */}
+      {deco?.links && deco.links.length > 0 && (
+        <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.75, pt: 0.75, borderTop: "1px solid", borderColor: "divider" }}>
+          {deco.links.slice(0, 6).map((link) => (
+            <Tooltip key={link.id} title={link.url}>
+              <Chip
+                component="a"
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                label={`${LINK_ICON(link.url)} ${link.label}`}
+                size="small"
+                clickable
+                sx={{ fontSize: 11, height: 22 }}
+              />
+            </Tooltip>
+          ))}
+        </Stack>
+      )}
+
       <Menu anchorEl={menuState?.anchor} open={!!menuState} onClose={() => setMenuState(null)}>
         <MenuItem disabled>{menuState?.user.name}</MenuItem>
         <MenuItem onClick={() => menuState && pingUser(menuState.user.id)}>
@@ -225,5 +306,9 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
         </MenuItem>
       </Menu>
     </Card>
+    {isOwner && (
+      <OfficeDecorateDialog room={room} open={decorateOpen} onClose={() => setDecorateOpen(false)} />
+    )}
+    </>
   );
 }

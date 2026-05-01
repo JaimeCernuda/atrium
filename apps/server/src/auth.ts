@@ -165,6 +165,19 @@ export async function registerAuth(
     reply.send({ ok: true });
   });
 
+  // Dev-only bypass: GET /auth/dev-login — instantly logs in as Anthony Kougkas.
+  // Never active in production (NODE_ENV !== "development").
+  if (process.env.NODE_ENV === "development") {
+    app.get("/auth/dev-login", async (_req, reply) => {
+      const email = "akougkas@illinoistech.edu";
+      const name = "Anthony Kougkas";
+      const id = `dev:${email}`;
+      await upsertUser({ id, email, name }, config.adminEmails);
+      const user: User = { id, email, name, isAdmin: config.adminEmails.includes(email) };
+      issueSessionAndRedirect(app, reply, config, user);
+    });
+  }
+
   app.get("/api/me", async (req, reply) => {
     const user = await getUser(req, config.session.cookieName);
     if (!user) return reply.code(401).send({ error: "unauthorized" });
@@ -224,6 +237,7 @@ export async function registerAuth(
   app.get("/api/auth/providers", async () => ({
     google: config.google !== null,
     microsoft: config.microsoft !== null,
+    devLogin: process.env.NODE_ENV === "development",
   }));
 }
 

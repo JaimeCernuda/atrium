@@ -84,7 +84,7 @@ function pickDefaultRoom(rooms: Room[]): string | null {
 export function loadConfig(): Config {
   const google = loadGoogle();
   const microsoft = loadMicrosoft();
-  if (!google && !microsoft) {
+  if (!google && !microsoft && process.env.NODE_ENV !== "development") {
     throw new Error("At least one auth provider must be configured (GOOGLE_* or MICROSOFT_*)");
   }
   const rooms = loadRooms(process.env.ROOMS_FILE);

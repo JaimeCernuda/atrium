@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { Room } from "@atrium/shared";
+import type { OfficeDecoration, OfficeLink, Room } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
@@ -13,6 +13,7 @@ function toApi(room: {
   externalMeetUrl: string | null;
   ownerEmail: string | null;
   locked: boolean;
+  decorations?: unknown;
 }): Room {
   return {
     id: room.id,
@@ -23,6 +24,7 @@ function toApi(room: {
     externalMeetUrl: room.externalMeetUrl ?? undefined,
     ownerEmail: room.ownerEmail ?? undefined,
     locked: room.locked,
+    decorations: (room.decorations as OfficeDecoration | null) ?? undefined,
   };
 }
 
@@ -227,4 +229,69 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     );
     return { ok: true };
   });
+
+  // Only the room owner can save decoration settings for their own room.
+  app.patch<{ Params: { id: string }; Body: OfficeDecoration }>(
+    "/api/rooms/:id/decorate",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      // Strictly owner-only — admins cannot overwrite someone else's personal office decorations
+      if (room.ownerEmail !== user.email) {
+        return reply.code(403).send({ error: "only the room owner can decorate this room" });
+      }
+      const b = req.body ?? {};
+      // Sanitize known scalar fields
+      const decorations: OfficeDecoration = {};
+      if (typeof b.bgColor === "string") decorations.bgColor = b.bgColor.slice(0, 32);
+      if (b.bgGradient && typeof b.bgGradient === "object") {
+        const { from, to, angle } = b.bgGradient as { from?: unknown; to?: unknown; angle?: unknown };
+        if (typeof from === "string" && typeof to === "string") {
+          decorations.bgGradient = {
+            from: from.slice(0, 32),
+            to: to.slice(0, 32),
+            angle: typeof angle === "number" ? Math.round(angle) % 360 : 135,
+          };
+        }
+      }
+      if (["dots", "stripes", "grid"].includes(b.bgPattern as string))
+        decorations.bgPattern = b.bgPattern;
+      if (typeof b.accentColor === "string") decorations.accentColor = b.accentColor.slice(0, 32);
+      if ([2, 4, 6].includes(b.borderWidth as number)) decorations.borderWidth = b.borderWidth;
+      if (["solid", "dashed", "dotted"].includes(b.borderStyle as string))
+        decorations.borderStyle = b.borderStyle;
+      if (typeof b.glow === "boolean") decorations.glow = b.glow;
+      if (typeof b.emoji === "string") decorations.emoji = b.emoji.slice(0, 8);
+      if (typeof b.badge === "string") decorations.badge = b.badge.slice(0, 24);
+      if (typeof b.badgeColor === "string") decorations.badgeColor = b.badgeColor.slice(0, 32);
+      if (typeof b.motto === "string") decorations.motto = b.motto.slice(0, 80);
+      if (typeof b.nameColor === "string") decorations.nameColor = b.nameColor.slice(0, 32);
+      if (typeof b.nameUppercase === "boolean") decorations.nameUppercase = b.nameUppercase;
+      if (typeof b.nameItalic === "boolean") decorations.nameItalic = b.nameItalic;
+      // Sanitize links array (max 8)
+      if (Array.isArray(b.links)) {
+        decorations.links = (b.links as unknown[])
+          .slice(0, 8)
+          .filter((l): l is OfficeLink => {
+            if (typeof l !== "object" || l === null) return false;
+            const { id, label, url } = l as Record<string, unknown>;
+            if (typeof id !== "string" || typeof label !== "string" || typeof url !== "string") return false;
+            try { new URL(url); } catch { return false; }
+            return true;
+          })
+          .map((l) => ({
+            id: String(l.id).slice(0, 40),
+            label: String(l.label).slice(0, 40),
+            url: String(l.url).slice(0, 500),
+          }));
+      }
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { decorations: decorations as object },
+      });
+      return toApi(updated);
+    },
+  );
 }

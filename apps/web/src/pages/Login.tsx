@@ -2,16 +2,18 @@ import { useEffect, useState } from "react";
 import { Box, Button, Divider, Paper, Stack, Typography } from "@mui/material";
 import GoogleIcon from "@mui/icons-material/Google";
 import WindowIcon from "@mui/icons-material/Window";
+import BugReportIcon from "@mui/icons-material/BugReport";
 import { useStore } from "../store";
 
 interface Providers {
   google: boolean;
   microsoft: boolean;
+  devLogin: boolean;
 }
 
 export function Login() {
   const brand = useStore((s) => s.brand);
-  const [providers, setProviders] = useState<Providers>({ google: false, microsoft: false });
+  const [providers, setProviders] = useState<Providers>({ google: false, microsoft: false, devLogin: false });
 
   useEffect(() => {
     fetch("/api/auth/providers")
@@ -139,6 +141,18 @@ export function Login() {
                     sx={{ justifyContent: "flex-start", py: 1.25 }}
                   >
                     Continue with Microsoft
+                  </Button>
+                )}
+                {providers.devLogin && (
+                  <Button
+                    variant="outlined"
+                    size="large"
+                    color="warning"
+                    href="/auth/dev-login"
+                    startIcon={<BugReportIcon />}
+                    sx={{ justifyContent: "flex-start", py: 1.25 }}
+                  >
+                    Dev login (Anthony Kougkas)
                   </Button>
                 )}
               </Stack>

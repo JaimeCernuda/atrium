@@ -30,6 +30,7 @@ model Room {
   sortOrder       Int      @default(0)
   ownerEmail      String?
   locked          Boolean  @default(false)
+  decorations     Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
