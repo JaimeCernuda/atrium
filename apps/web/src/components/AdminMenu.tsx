@@ -29,6 +29,9 @@ export function AdminMenu() {
         <MenuItem onClick={() => go("/admin/bot-tokens")}>
           <ListItemText primary="Bots" />
         </MenuItem>
+        <MenuItem onClick={() => go("/admin/submissions")}>
+          <ListItemText primary="Submissions" />
+        </MenuItem>
       </Menu>
     </>
   );

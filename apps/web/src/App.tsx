@@ -18,6 +18,8 @@ import { AdminBotTokens } from "./pages/AdminBotTokens";
 import { DigestList } from "./pages/Digest/List";
 import { DigestDay } from "./pages/Digest/Day";
 import { Reminders } from "./pages/Reminders";
+import { Submit } from "./pages/Submit";
+import { AdminSubmissions } from "./pages/AdminSubmissions";
 import { AppShell } from "./components/AppShell";
 import { resolveMode } from "./prefs";
 
@@ -95,6 +97,7 @@ export function App() {
                 <Route path="/" element={<Office />} />
                 <Route path="/digest" element={<DigestList />} />
                 <Route path="/reminders" element={<Reminders />} />
+                <Route path="/submit" element={<Submit />} />
                 {user.isAdmin && (
                   <Route
                     path="/admin/metrics"
@@ -121,6 +124,16 @@ export function App() {
                     element={
                       <AppShell>
                         <AdminBotTokens />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {user.isAdmin && (
+                  <Route
+                    path="/admin/submissions"
+                    element={
+                      <AppShell>
+                        <AdminSubmissions />
                       </AppShell>
                     }
                   />

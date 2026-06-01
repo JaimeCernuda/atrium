@@ -27,12 +27,14 @@ const TABS: Array<{ label: string; path: string }> = [
   { label: "Office", path: "/" },
   { label: "Digest", path: "/digest" },
   { label: "Reminders", path: "/reminders" },
+  { label: "Submit", path: "/submit" },
 ];
 
 function matchTab(pathname: string): string {
   if (pathname === "/") return "/";
   if (pathname.startsWith("/digest")) return "/digest";
   if (pathname.startsWith("/reminders")) return "/reminders";
+  if (pathname.startsWith("/submit")) return "/submit";
   return "";
 }
 

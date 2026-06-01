@@ -87,6 +87,40 @@ export interface BotTokenCreated extends BotTokenInfo {
   token: string;
 }
 
+export type SubmissionKind = "paper" | "poster";
+export type SubmissionStatus = "received" | "delivering" | "delivered" | "failed";
+
+export interface SubmissionFile {
+  role: string; // "pdf" | "source" | "bib" | "cite" | "slides-pptx" | "slides-pdf" | "poster" | "abstract"
+  filename: string; // renamed-from-key, e.g. tang2026.pdf
+  publicUrl: string | null; // set once delivered to babbage2
+}
+
+export interface Submission {
+  id: string;
+  kind: SubmissionKind;
+  citationKey: string;
+  title: string;
+  authors: string;
+  venue: string;
+  year: number;
+  pubType: string | null;
+  funding: string;
+  githubUrl: string;
+  doi: string | null;
+  abstract: string;
+  notes: string | null;
+  submitterName: string;
+  submitterEmail: string;
+  files: SubmissionFile[];
+  stage: string;
+  status: SubmissionStatus;
+  deliveryLog: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ServerToClientEvents = {
   "presence:snapshot": (state: Record<string, PresenceUser[]>) => void;
   "presence:enter": (evt: PresenceEvent) => void;

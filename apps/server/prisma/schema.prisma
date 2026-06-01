@@ -105,6 +105,36 @@ model Reminder {
   @@index([createdByBotId])
 }
 
+model Submission {
+  id             String    @id @default(cuid())
+  kind           String // "paper" | "poster"
+  citationKey    String
+  title          String
+  authors        String
+  venue          String
+  year           Int
+  pubType        String? // Conference/Journal/Workshop/Preprint (papers only)
+  funding        String // grant list or the literal "none"
+  githubUrl      String // repo url or the literal "none"
+  doi            String? // posters optional; papers set at edit
+  abstract       String
+  notes          String?
+  submitterId    String
+  submitterName  String
+  submitterEmail String
+  files          Json      @default("[]") // [{role, filename, publicUrl}]
+  stage          String    @default("new") // paper: new -> edited
+  status         String    @default("received") // received|delivering|delivered|failed
+  deliveryLog    String?
+  deliveredAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([citationKey])
+  @@index([submitterId])
+  @@index([status])
+}
+
 model BotToken {
   id         String    @id @default(cuid())
   name       String

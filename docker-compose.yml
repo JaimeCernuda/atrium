@@ -13,9 +13,12 @@ services:
     environment:
       - ROOMS_FILE=/config/rooms.json
       - DATABASE_URL=postgresql://atrium:atrium@postgres:5432/atrium
+      - PAPERS_DIR=/data/papers
     volumes:
       - ./config:/config:ro
       - atrium-avatars:/data/avatars
+      # Canonical submission archive on the host; the host-side deliver job reads from here.
+      - /data/papers:/data/papers
 
   postgres:
     image: postgres:16-alpine
