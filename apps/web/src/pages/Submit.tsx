@@ -43,8 +43,27 @@ interface FileSlot {
   label: string;
   accept: string;
   required: boolean;
-  help?: { img: string; title: string };
+  help?: { title: string; img?: string; code?: string };
 }
+
+const EX_BIB = `@inproceedings{tang2026hstream,
+  author    = {M. Tang and J. Cernuda and A. Kougkas and X.-H. Sun},
+  title     = {{HStream: A Hierarchical Data Streaming Engine}},
+  booktitle = {Proc. 53rd Int. Conf. Parallel Processing (ICPP)},
+  year      = {2026}
+}`;
+
+const EX_BIB_DOI = `@inproceedings{tang2026hstream,
+  author    = {M. Tang and J. Cernuda and A. Kougkas and X.-H. Sun},
+  title     = {{HStream: A Hierarchical Data Streaming Engine}},
+  booktitle = {Proc. 53rd Int. Conf. Parallel Processing (ICPP)},
+  year      = {2026},
+  doi       = {10.1145/3673038.3673151}
+}`;
+
+const EX_TXT = `M. Tang, J. Cernuda, A. Kougkas, and X.-H. Sun,
+"HStream: A Hierarchical Data Streaming Engine,"
+in Proc. 53rd Int. Conf. Parallel Processing (ICPP), 2026.`;
 
 const PAPER_NEW_FILES: FileSlot[] = [
   { role: "pdf", label: "Paper PDF", accept: ".pdf", required: true },
@@ -55,19 +74,49 @@ const PAPER_NEW_FILES: FileSlot[] = [
     required: true,
     help: { img: "/overleaf-zip.png", title: "Overleaf → File → Download as source (.zip)" },
   },
-  { role: "bib", label: "Citation .bib (no DOI)", accept: ".bib", required: true },
-  { role: "cite", label: "Citation, plain text (.txt)", accept: ".txt", required: true },
+  {
+    role: "bib",
+    label: "Citation .bib (no DOI)",
+    accept: ".bib",
+    required: true,
+    help: { title: "Example .bib (no DOI yet)", code: EX_BIB },
+  },
+  {
+    role: "cite",
+    label: "Citation, plain text (.txt)",
+    accept: ".txt",
+    required: true,
+    help: { title: "Example plain-text citation", code: EX_TXT },
+  },
 ];
 const PAPER_EDIT_FILES: FileSlot[] = [
-  { role: "bib", label: "Citation .bib (with DOI)", accept: ".bib", required: true },
+  {
+    role: "bib",
+    label: "Citation .bib (with DOI)",
+    accept: ".bib",
+    required: true,
+    help: { title: "Example .bib (with DOI)", code: EX_BIB_DOI },
+  },
   { role: "slides-pptx", label: "Slides (.pptx)", accept: ".pptx", required: true },
   { role: "slides-pdf", label: "Slides (.pdf)", accept: ".pdf", required: true },
 ];
 const POSTER_FILES: FileSlot[] = [
   { role: "poster", label: "Poster (.pdf)", accept: ".pdf", required: true },
   { role: "abstract", label: "Extended abstract (.pdf)", accept: ".pdf", required: false },
-  { role: "bib", label: "Citation .bib", accept: ".bib", required: true },
-  { role: "cite", label: "Citation, plain text (.txt)", accept: ".txt", required: true },
+  {
+    role: "bib",
+    label: "Citation .bib",
+    accept: ".bib",
+    required: true,
+    help: { title: "Example .bib", code: EX_BIB },
+  },
+  {
+    role: "cite",
+    label: "Citation, plain text (.txt)",
+    accept: ".txt",
+    required: true,
+    help: { title: "Example plain-text citation", code: EX_TXT },
+  },
 ];
 
 function FileDrop({
@@ -125,17 +174,39 @@ function FileDrop({
         }}
       />
       {slot.help && (
-        <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="xs">
+        <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="sm" fullWidth={!!slot.help.code}>
           <DialogTitle>{slot.help.title}</DialogTitle>
           <DialogContent>
-            <Box
-              component="img"
-              src={slot.help.img}
-              alt={slot.help.title}
-              sx={{ width: "100%", borderRadius: 1, border: 1, borderColor: "divider" }}
-            />
+            {slot.help.img && (
+              <Box
+                component="img"
+                src={slot.help.img}
+                alt={slot.help.title}
+                sx={{ width: "100%", borderRadius: 1, border: 1, borderColor: "divider" }}
+              />
+            )}
+            {slot.help.code && (
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  p: 1.5,
+                  bgcolor: "action.hover",
+                  borderRadius: 1,
+                  fontSize: "0.8rem",
+                  fontFamily: "monospace",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {slot.help.code}
+              </Box>
+            )}
           </DialogContent>
           <DialogActions>
+            {slot.help.code && (
+              <Button onClick={() => navigator.clipboard.writeText(slot.help!.code!)}>Copy</Button>
+            )}
             <Button onClick={() => setHelpOpen(false)}>Got it</Button>
           </DialogActions>
         </Dialog>
