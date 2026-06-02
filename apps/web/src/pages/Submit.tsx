@@ -43,11 +43,18 @@ interface FileSlot {
   label: string;
   accept: string;
   required: boolean;
+  help?: { img: string; title: string };
 }
 
 const PAPER_NEW_FILES: FileSlot[] = [
   { role: "pdf", label: "Paper PDF", accept: ".pdf", required: true },
-  { role: "source", label: "LaTeX source (.zip)", accept: ".zip", required: true },
+  {
+    role: "source",
+    label: "LaTeX source (.zip)",
+    accept: ".zip",
+    required: true,
+    help: { img: "/overleaf-zip.png", title: "Overleaf → File → Download as source (.zip)" },
+  },
   { role: "bib", label: "Citation .bib (no DOI)", accept: ".bib", required: true },
   { role: "cite", label: "Citation, plain text (.txt)", accept: ".txt", required: true },
 ];
@@ -73,6 +80,7 @@ function FileDrop({
   onPick: (f: File | null) => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   return (
     <Paper
       variant="outlined"
@@ -90,6 +98,13 @@ function FileDrop({
             <Box component="span" sx={{ color: "text.disabled" }}>
               — optional
             </Box>
+          )}
+          {slot.help && (
+            <Tooltip title="How to get this file">
+              <IconButton size="small" sx={{ ml: 0.5 }} onClick={() => setHelpOpen(true)}>
+                <HelpOutlineIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            </Tooltip>
           )}
         </Typography>
         <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
@@ -109,6 +124,22 @@ function FileDrop({
           e.target.value = "";
         }}
       />
+      {slot.help && (
+        <Dialog open={helpOpen} onClose={() => setHelpOpen(false)} maxWidth="xs">
+          <DialogTitle>{slot.help.title}</DialogTitle>
+          <DialogContent>
+            <Box
+              component="img"
+              src={slot.help.img}
+              alt={slot.help.title}
+              sx={{ width: "100%", borderRadius: 1, border: 1, borderColor: "divider" }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setHelpOpen(false)}>Got it</Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Paper>
   );
 }
