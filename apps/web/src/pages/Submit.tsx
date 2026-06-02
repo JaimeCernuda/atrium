@@ -46,24 +46,29 @@ interface FileSlot {
   help?: { title: string; img?: string; code?: string };
 }
 
-const EX_BIB = `@inproceedings{tang2026hstream,
-  author    = {M. Tang and J. Cernuda and A. Kougkas and X.-H. Sun},
-  title     = {{HStream: A Hierarchical Data Streaming Engine}},
-  booktitle = {Proc. 53rd Int. Conf. Parallel Processing (ICPP)},
-  year      = {2026}
+const EX_BIB = `@inproceedings{cernuda2024hstream,
+  author    = {Jaime Cernuda and Jie Ye and Anthony Kougkas and Xian-He Sun},
+  title     = {{HStream: A hierarchical data streaming engine for
+               high-throughput scientific applications}},
+  booktitle = {Proc. 53rd Int. Conf. on Parallel Processing (ICPP '24)},
+  year      = {2024},
+  pages     = {231--240}
 }`;
 
-const EX_BIB_DOI = `@inproceedings{tang2026hstream,
-  author    = {M. Tang and J. Cernuda and A. Kougkas and X.-H. Sun},
-  title     = {{HStream: A Hierarchical Data Streaming Engine}},
-  booktitle = {Proc. 53rd Int. Conf. Parallel Processing (ICPP)},
-  year      = {2026},
-  doi       = {10.1145/3673038.3673151}
+const EX_BIB_DOI = `@inproceedings{cernuda2024hstream,
+  author    = {Jaime Cernuda and Jie Ye and Anthony Kougkas and Xian-He Sun},
+  title     = {{HStream: A hierarchical data streaming engine for
+               high-throughput scientific applications}},
+  booktitle = {Proc. 53rd Int. Conf. on Parallel Processing (ICPP '24)},
+  year      = {2024},
+  pages     = {231--240},
+  doi       = {10.1145/3673038.3673150}
 }`;
 
-const EX_TXT = `M. Tang, J. Cernuda, A. Kougkas, and X.-H. Sun,
-"HStream: A Hierarchical Data Streaming Engine,"
-in Proc. 53rd Int. Conf. Parallel Processing (ICPP), 2026.`;
+const EX_TXT = `J. Cernuda, J. Ye, A. Kougkas, and X.-H. Sun, "HStream: A
+hierarchical data streaming engine for high-throughput scientific
+applications," in Proc. 53rd Int. Conf. on Parallel Processing
+(ICPP '24), 2024, pp. 231-240.`;
 
 const PAPER_NEW_FILES: FileSlot[] = [
   { role: "pdf", label: "Paper PDF", accept: ".pdf", required: true },
@@ -416,7 +421,7 @@ export function Submit() {
                 value={fields.citation_key ?? ""}
                 onChange={set("citation_key")}
                 placeholder="kougkas2025iowarp"
-                helperText="Matches your .bib key. Names every file. Recommended: surnameYearShortTitle (e.g. tang2026hstream). Letters, digits, _ : + -"
+                helperText="Matches your .bib key. Names every file. Recommended: surnameYearShortTitle (e.g. cernuda2024hstream). Letters, digits, _ : + -"
               />
               <TextField
                 label={kind === "poster" ? "Poster title" : "Paper title"}
