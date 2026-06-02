@@ -53,8 +53,12 @@ const PAPER_NEW: FileSpec[] = [
 
 const PAPER_EDIT: FileSpec[] = [
   { role: "bib", want: "text", bib: true, name: (k) => `${k}.bib` },
+  { role: "cite", want: "text", name: (k) => `${k}.txt` },
   { role: "slides-pptx", want: "zip", name: (k) => `${k}-slides.pptx` },
   { role: "slides-pdf", want: "pdf", name: (k) => `${k}-slides.pdf` },
+  // Camera-ready updates (optional): replace the originally-submitted paper/source.
+  { role: "pdf", want: "pdf", name: (k) => `${k}.pdf` },
+  { role: "source", want: "zip", name: (k) => `${k}-source.zip` },
 ];
 
 const POSTER: FileSpec[] = [
@@ -261,13 +265,15 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
       priorFiles = renamed;
     }
 
-    // Package 2 files: bib replaces P1 bib; slides added.
-    const res = await ingestFiles(finalKey, PAPER_EDIT, parsed.files, new Set());
+    // Package 2 files: bib + cite (with DOI) replace P1's; slides added.
+    // Camera-ready paper/source are optional and replace the originals when provided.
+    const res = await ingestFiles(finalKey, PAPER_EDIT, parsed.files, new Set(["pdf", "source"]));
     if (!res.ok) return bad(reply, res.msg);
 
-    // Merge file list: drop old bib (replaced), keep others, add P2.
+    // Merge file list: any role re-uploaded in this package replaces the prior file.
+    const replacedRoles = new Set(res.out.map((f) => f.role));
     const merged: SubmissionFile[] = [
-      ...priorFiles.filter((p) => p.role !== "bib"),
+      ...priorFiles.filter((p) => !replacedRoles.has(p.role)),
       ...res.out,
     ];
 

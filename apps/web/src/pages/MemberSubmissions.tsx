@@ -2,15 +2,19 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Avatar,
+  Button,
   Chip,
   Container,
   Skeleton,
   Stack,
   Typography,
 } from "@mui/material";
-import { useParams } from "react-router-dom";
+import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
+import { useNavigate, useParams } from "react-router-dom";
 import type { Submission } from "@atrium/shared";
 import { SubmissionsTable } from "../components/SubmissionsTable";
+import { can, useStore } from "../store";
 
 interface MemberHeader {
   id: string;
@@ -28,8 +32,14 @@ interface MemberSubmissionsResponse {
 
 export function MemberSubmissions() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const me = useStore((s) => s.user);
   const [data, setData] = useState<MemberSubmissionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // The hub controls (new / edit) only appear on your own page if you can submit.
+  const isSelf = id === "me" || (data !== null && data.member.id === me?.id);
+  const canSubmit = isSelf && can(me, "submit");
 
   useEffect(() => {
     if (!id) return;
@@ -75,7 +85,7 @@ export function MemberSubmissions() {
             >
               {data.member.name.charAt(0)}
             </Avatar>
-            <Stack>
+            <Stack sx={{ flexGrow: 1 }}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="h5" sx={{ fontWeight: 600 }}>
                   {data.member.name}
@@ -86,12 +96,33 @@ export function MemberSubmissions() {
                 {data.member.email}
               </Typography>
             </Stack>
+            {canSubmit && (
+              <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate("/submit")}>
+                New submission
+              </Button>
+            )}
           </Stack>
 
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 1.5 }}>
             Submissions ({data.items.length})
           </Typography>
-          <SubmissionsTable items={data.items} />
+          <SubmissionsTable
+            items={data.items}
+            renderActions={
+              canSubmit
+                ? (s) =>
+                    s.kind === "paper" ? (
+                      <Button
+                        size="small"
+                        startIcon={<EditIcon />}
+                        onClick={() => navigate(`/submit/edit/${s.id}`)}
+                      >
+                        {s.stage === "edited" ? "Re-edit" : "Edit"}
+                      </Button>
+                    ) : null
+                : undefined
+            }
+          />
         </>
       )}
     </Container>

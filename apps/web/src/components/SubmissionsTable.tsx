@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Box,
   Chip,
@@ -27,10 +28,12 @@ interface Props {
   items: Submission[];
   /** Show the submitter column (admin monitor view). */
   showSubmitter?: boolean;
+  /** Optional per-row actions (e.g. an Edit button on your own papers). */
+  renderActions?: (s: Submission) => ReactNode;
 }
 
-export function SubmissionsTable({ items, showSubmitter = false }: Props) {
-  const columns = showSubmitter ? 6 : 5;
+export function SubmissionsTable({ items, showSubmitter = false, renderActions }: Props) {
+  const columns = 5 + (showSubmitter ? 1 : 0) + (renderActions ? 1 : 0);
   return (
     <Paper variant="outlined">
       <Table size="small">
@@ -42,6 +45,7 @@ export function SubmissionsTable({ items, showSubmitter = false }: Props) {
             <TableCell>Status</TableCell>
             <TableCell>Submitted</TableCell>
             <TableCell>Files</TableCell>
+            {renderActions && <TableCell align="right" />}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -102,6 +106,11 @@ export function SubmissionsTable({ items, showSubmitter = false }: Props) {
                   )}
                 </Box>
               </TableCell>
+              {renderActions && (
+                <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                  {renderActions(s)}
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

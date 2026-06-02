@@ -21,6 +21,7 @@ import { DigestList } from "./pages/Digest/List";
 import { DigestDay } from "./pages/Digest/Day";
 import { Reminders } from "./pages/Reminders";
 import { Submit } from "./pages/Submit";
+import { SubmitEdit } from "./pages/SubmitEdit";
 import { AdminSubmissions } from "./pages/AdminSubmissions";
 import { MemberSubmissions } from "./pages/MemberSubmissions";
 import { AppShell } from "./components/AppShell";
@@ -101,6 +102,7 @@ export function App() {
                 <Route path="/digest" element={<DigestList />} />
                 <Route path="/reminders" element={<Reminders />} />
                 {can(user, "submit") && <Route path="/submit" element={<Submit />} />}
+                {can(user, "submit") && <Route path="/submit/edit/:id" element={<SubmitEdit />} />}
                 <Route
                   path="/members/:id/submissions"
                   element={
