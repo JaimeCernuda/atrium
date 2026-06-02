@@ -78,7 +78,6 @@ Host babbage-relay
   User scs
   ProxyJump scs-vm
   HostKeyAlgorithms +ssh-rsa
-  PubkeyAcceptedAlgorithms +ssh-rsa
   PreferredAuthentications password
   StrictHostKeyChecking accept-new
   UserKnownHostsFile /dev/null
