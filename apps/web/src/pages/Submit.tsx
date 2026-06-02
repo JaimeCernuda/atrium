@@ -314,7 +314,7 @@ export function Submit() {
                 value={fields.citation_key ?? ""}
                 onChange={set("citation_key")}
                 placeholder="kougkas2025iowarp"
-                helperText="Matches your .bib key. Names every file. Letters, digits, _ : + -"
+                helperText="Matches your .bib key. Names every file. Recommended: surnameYearShortTitle (e.g. tang2026hstream). Letters, digits, _ : + -"
               />
               <TextField
                 label={kind === "poster" ? "Poster title" : "Paper title"}
