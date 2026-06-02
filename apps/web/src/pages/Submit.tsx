@@ -5,21 +5,34 @@ import {
   Button,
   Chip,
   Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   FormControlLabel,
+  IconButton,
+  InputAdornment,
   Link,
   MenuItem,
   Paper,
   Stack,
   Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import type { Submission } from "@atrium/shared";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import type { FundingGrant, FundingList, Submission } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
 
 type Kind = "paper" | "poster";
@@ -120,6 +133,8 @@ export function Submit() {
   const [error, setError] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [mine, setMine] = useState<Submission[]>([]);
+  const [fundingOpen, setFundingOpen] = useState(false);
+  const [funding, setFunding] = useState<FundingList>({ active: [], completed: [] });
 
   const set = (k: string) => (e: { target: { value: string } }) =>
     setFields((p) => ({ ...p, [k]: e.target.value }));
@@ -131,6 +146,23 @@ export function Submit() {
       .catch(() => {});
   };
   useEffect(loadMine, []);
+
+  useEffect(() => {
+    fetch("/api/funding", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : { active: [], completed: [] }))
+      .then((d: FundingList) => setFunding(d))
+      .catch(() => {});
+  }, []);
+
+  const addGrant = (g: FundingGrant) => {
+    setFundingNone(false);
+    setFields((p) => {
+      const cur = (p.funding ?? "").trim();
+      const parts = cur ? cur.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      if (!parts.includes(g.grant)) parts.push(g.grant);
+      return { ...p, funding: parts.join(", ") };
+    });
+  };
 
   const slots =
     kind === "poster" ? POSTER_FILES : stage === "edit" ? PAPER_EDIT_FILES : PAPER_NEW_FILES;
@@ -331,7 +363,23 @@ export function Submit() {
                   disabled={fundingNone}
                   value={fundingNone ? "none" : fields.funding ?? ""}
                   onChange={set("funding")}
-                  helperText="Comma-separated grant numbers / sources."
+                  helperText="Comma-separated grant numbers / sources. Use the help icon to pick a lab grant."
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <Tooltip title="Look up GRC grant numbers">
+                          <IconButton
+                            edge="end"
+                            size="small"
+                            disabled={fundingNone}
+                            onClick={() => setFundingOpen(true)}
+                          >
+                            <HelpOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </InputAdornment>
+                    ),
+                  }}
                 />
                 <FormControlLabel
                   control={
@@ -486,6 +534,56 @@ export function Submit() {
             ))}
           </Stack>
         )}
+
+        <Dialog open={fundingOpen} onClose={() => setFundingOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>GRC funding — click a grant to add it</DialogTitle>
+          <DialogContent>
+            {(["active", "completed"] as const).map((bucket) =>
+              funding[bucket].length === 0 ? null : (
+                <Box key={bucket} sx={{ mb: 2 }}>
+                  <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, textTransform: "capitalize" }}>
+                    {bucket} ({funding[bucket].length})
+                  </Typography>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Project</TableCell>
+                        <TableCell>Grant</TableCell>
+                        <TableCell>Agency</TableCell>
+                        <TableCell>Title</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {funding[bucket].map((g) => (
+                        <TableRow
+                          key={g.grant + g.project}
+                          hover
+                          sx={{ cursor: "pointer" }}
+                          onClick={() => addGrant(g)}
+                        >
+                          <TableCell sx={{ fontWeight: 500 }}>{g.project}</TableCell>
+                          <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                            {g.grant}
+                          </TableCell>
+                          <TableCell>{g.agency}</TableCell>
+                          <TableCell sx={{ color: "text.secondary", fontSize: "0.8rem" }}>
+                            {g.title}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Box>
+              ),
+            )}
+            <Typography variant="caption" color="text.secondary">
+              Maintainer: edit <code>config/funding.json</code> to change this list.
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setFundingOpen(false)}>Done</Button>
+          </DialogActions>
+        </Dialog>
       </Container>
     </AppShell>
   );

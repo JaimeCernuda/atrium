@@ -87,6 +87,18 @@ export interface BotTokenCreated extends BotTokenInfo {
   token: string;
 }
 
+export interface FundingGrant {
+  project: string;
+  grant: string;
+  agency: string;
+  title: string;
+}
+
+export interface FundingList {
+  active: FundingGrant[];
+  completed: FundingGrant[];
+}
+
 export type SubmissionKind = "paper" | "poster";
 export type SubmissionStatus = "received" | "delivering" | "delivered" | "failed";
 

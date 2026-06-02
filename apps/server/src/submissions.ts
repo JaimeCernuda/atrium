@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readdir, rename, unlink } from "node:fs/promises";
+import { mkdir, writeFile, rename, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -157,6 +157,18 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     const row = await prisma.user.findUnique({ where: { id: userId }, select: { isAdmin: true } });
     return Boolean(row?.isAdmin);
   }
+
+  // ---- funding reference (edit /config/funding.json live; read per request) ----
+  app.get("/api/funding", async (req, reply) => {
+    const user = await requireUser(req, reply, config.session.cookieName);
+    if (!user) return;
+    const file = process.env.FUNDING_FILE ?? "/config/funding.json";
+    try {
+      return reply.send(JSON.parse(await readFile(file, "utf8")));
+    } catch {
+      return reply.send({ active: [], completed: [] });
+    }
+  });
 
   // ---- create: paper-new or poster ----
   app.post("/api/submissions", async (req, reply) => {
