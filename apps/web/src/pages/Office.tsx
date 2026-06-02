@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Box, Button, Container, Divider, Stack, Typography } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import type { PresenceUser, Room, User } from "@atrium/shared";
-import { useStore } from "../store";
+import { can, useStore } from "../store";
 import { getSocket } from "../socket";
 import { RoomCard } from "../components/RoomCard";
 import { AppShell } from "../components/AppShell";
@@ -65,7 +65,7 @@ export function Office() {
         {rooms.length === 0 && (
           <Typography color="text.secondary" sx={{ mt: 6, textAlign: "center" }}>
             No rooms yet.{" "}
-            {user?.isAdmin && (
+            {can(user, "manage_rooms") && (
               <Button onClick={() => navigate("/admin/rooms")}>Add one</Button>
             )}
           </Typography>

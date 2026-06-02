@@ -4,6 +4,7 @@ import jwtPlugin from "@fastify/jwt";
 import type { User } from "@atrium/shared";
 import { isEmailAllowed, type Config } from "./config.js";
 import { prisma, upsertUser } from "./db.js";
+import { permissionsForRole } from "./permissions.js";
 import type { Broadcaster } from "./presence.js";
 
 declare module "fastify" {
@@ -170,7 +171,7 @@ export async function registerAuth(
     if (!user) return reply.code(401).send({ error: "unauthorized" });
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { id: true, name: true, email: true, imageUrl: true, isAdmin: true },
+      select: { id: true, name: true, email: true, imageUrl: true, isAdmin: true, role: true },
     });
     if (!dbUser) return reply.code(401).send({ error: "unauthorized" });
     return {
@@ -179,6 +180,8 @@ export async function registerAuth(
       email: dbUser.email,
       imageUrl: dbUser.imageUrl ?? undefined,
       isAdmin: dbUser.isAdmin,
+      role: dbUser.role,
+      permissions: [...(await permissionsForRole(dbUser.role))],
     };
   });
 
@@ -209,7 +212,7 @@ export async function registerAuth(
     const updated = await prisma.user.update({
       where: { id: user.id },
       data,
-      select: { id: true, name: true, email: true, imageUrl: true, isAdmin: true },
+      select: { id: true, name: true, email: true, imageUrl: true, isAdmin: true, role: true },
     });
     const payload = {
       id: updated.id,
@@ -218,7 +221,12 @@ export async function registerAuth(
       imageUrl: updated.imageUrl ?? undefined,
     };
     broadcaster.current?.broadcastUserUpdate(payload);
-    return { ...payload, isAdmin: updated.isAdmin };
+    return {
+      ...payload,
+      isAdmin: updated.isAdmin,
+      role: updated.role,
+      permissions: [...(await permissionsForRole(updated.role))],
+    };
   });
 
   app.get("/api/auth/providers", async () => ({

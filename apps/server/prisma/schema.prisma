@@ -13,11 +13,26 @@ model User {
   name             String
   imageUrl         String?
   isAdmin          Boolean           @default(false)
+  role             String            @default("external") // soft ref to Role.id
   createdAt        DateTime          @default(now())
   lastSeenAt       DateTime?
   presenceSessions PresenceSession[]
   meetingSessions  MeetingSession[]
   sentMessages     Message[]         @relation("SentMessages")
+
+  @@index([role])
+}
+
+model Role {
+  id          String   @id // slug: "owner", "professor", "phd", "student", "external", or custom
+  name        String // display label, editable
+  permissions String[] // subset of PERMISSION_KEYS (see src/permissions.ts)
+  sortOrder   Int      @default(0)
+  isProtected Boolean  @default(false) // owner/external: cannot be deleted
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sortOrder])
 }
 
 model Room {

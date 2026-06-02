@@ -1,8 +1,9 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { Room } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
+import { requirePermission, userHasPermission } from "./permissions.js";
 
 function toApi(room: {
   id: string;
@@ -25,14 +26,6 @@ function toApi(room: {
     locked: room.locked,
   };
 }
-
-const OFFICE_OWNERS: Record<string, string> = {
-  Anthony: "akougkas@illinoistech.edu",
-  Luke: "llogan@illinoistech.edu",
-  Jaime: "jcernudagarcia@illinoistech.edu",
-  Kun: "kfeng1@illinoistech.edu",
-  Eneko: "egonzalez30@illinoistech.edu",
-};
 
 const COLOR_TO_CATEGORY: Record<string, string> = {
   "#9e9e9e": "Common",
@@ -104,13 +97,8 @@ export async function seedRoomsIfEmpty(rooms: Room[]): Promise<void> {
     }
   }
 
-  // Map offices to their owners (idempotent).
-  for (const [name, email] of Object.entries(OFFICE_OWNERS)) {
-    await prisma.room.updateMany({
-      where: { name, category: "Offices", ownerEmail: null },
-      data: { ownerEmail: email },
-    });
-  }
+  // Note: office ownership (Room.ownerEmail) is now assigned from the admin
+  // Members page rather than a hard-coded seed map.
 }
 
 export async function findRoomOwnedBy(email: string): Promise<string | null> {
@@ -135,17 +123,6 @@ export async function isRoomEnterableBy(
 }
 
 export async function registerRooms(app: FastifyInstance, config: Config): Promise<void> {
-  async function requireAdmin(req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-    const user = await requireUser(req, reply, config.session.cookieName);
-    if (!user) return false;
-    const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-    if (!dbUser?.isAdmin) {
-      reply.code(403).send({ error: "admin only" });
-      return false;
-    }
-    return true;
-  }
-
   app.get("/api/rooms", async (req, reply) => {
     const user = await requireUser(req, reply, config.session.cookieName);
     if (!user) return reply;
@@ -154,7 +131,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   });
 
   app.post<{ Body: Room }>("/api/rooms", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const body = req.body;
     if (!body?.id || !body?.name) {
       return reply.code(400).send({ error: "id and name required" });
@@ -175,7 +152,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   });
 
   app.patch<{ Params: { id: string }; Body: Partial<Room> }>("/api/rooms/:id", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { id } = req.params;
     const body = req.body ?? {};
     const updated = await prisma.room.update({
@@ -192,7 +169,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   });
 
   app.delete<{ Params: { id: string } }>("/api/rooms/:id", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     await prisma.room.delete({ where: { id: req.params.id } });
     return { ok: true };
   });
@@ -205,9 +182,8 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       if (!user) return reply;
       const room = await prisma.room.findUnique({ where: { id: req.params.id } });
       if (!room) return reply.code(404).send({ error: "room not found" });
-      const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
       const isOwner = room.ownerEmail === user.email;
-      if (!isOwner && !dbUser?.isAdmin) {
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
         return reply.code(403).send({ error: "only the owner or an admin can lock this room" });
       }
       const updated = await prisma.room.update({
@@ -219,7 +195,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   );
 
   app.post<{ Body: { order: string[] } }>("/api/rooms/reorder", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { order } = req.body;
     if (!Array.isArray(order)) return reply.code(400).send({ error: "order must be an array" });
     await prisma.$transaction(

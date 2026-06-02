@@ -7,6 +7,7 @@ import type { Submission, SubmissionFile } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
+import { requirePermission } from "./permissions.js";
 
 const PAPERS_DIR = resolve(process.env.PAPERS_DIR ?? "/data/papers");
 const KEY_RE = /^[A-Za-z][A-Za-z0-9_:+-]*$/;
@@ -83,7 +84,7 @@ async function parseMultipart(req: FastifyRequest): Promise<Parsed> {
   return { fields, files };
 }
 
-function toApi(row: {
+export function toApi(row: {
   id: string; kind: string; citationKey: string; title: string; authors: string;
   venue: string; year: number; pubType: string | null; funding: string; githubUrl: string;
   doi: string | null; abstract: string; notes: string | null; submitterName: string;
@@ -153,11 +154,6 @@ async function ingestFiles(
 export async function registerSubmissions(app: FastifyInstance, config: Config): Promise<void> {
   await mkdir(PAPERS_DIR, { recursive: true });
 
-  async function isAdmin(userId: string): Promise<boolean> {
-    const row = await prisma.user.findUnique({ where: { id: userId }, select: { isAdmin: true } });
-    return Boolean(row?.isAdmin);
-  }
-
   // ---- funding reference (edit /config/funding.json live; read per request) ----
   app.get("/api/funding", async (req, reply) => {
     const user = await requireUser(req, reply, config.session.cookieName);
@@ -172,7 +168,7 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
 
   // ---- create: paper-new or poster ----
   app.post("/api/submissions", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
+    const user = await requirePermission(req, reply, "submit", config.session.cookieName);
     if (!user) return;
     let parsed: Parsed;
     try {
@@ -229,7 +225,7 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
 
   // ---- paper post-conference edit (Package 2 merge) ----
   app.post("/api/submissions/edit", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
+    const user = await requirePermission(req, reply, "submit", config.session.cookieName);
     if (!user) return;
     let parsed: Parsed;
     try {
@@ -298,9 +294,8 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
 
   // ---- admin: all submissions (monitor) ----
   app.get("/api/submissions", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
+    const user = await requirePermission(req, reply, "view_all_submissions", config.session.cookieName);
     if (!user) return;
-    if (!(await isAdmin(user.id))) return reply.code(403).send({ error: "admin_required" });
     const rows = await prisma.submission.findMany({ orderBy: { createdAt: "desc" } });
     return reply.send({ items: rows.map(toApi) });
   });

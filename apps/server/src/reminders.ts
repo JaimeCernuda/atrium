@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Reminder, ReminderCategory } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
-import { requireUser, getUser } from "./auth.js";
+import { requireUser } from "./auth.js";
+import { userHasPermission } from "./permissions.js";
 import { hasBotBearer, requireBotScope } from "./bot-auth.js";
 
 const VALID_CATEGORIES: ReminderCategory[] = ["deadline", "event", "admin", "other"];
@@ -129,6 +130,9 @@ export async function registerReminders(app: FastifyInstance, config: Config): P
   }>("/api/reminders", async (req, reply) => {
     const authz = await authenticate(req, reply, config.session.cookieName, "reminders:write");
     if (!authz) return;
+    if (authz.kind === "user" && !(await userHasPermission(authz.userId, "create_reminders"))) {
+      return reply.code(403).send({ error: "forbidden", required: "create_reminders" });
+    }
 
     const body = req.body ?? {};
     const title = typeof body.title === "string" ? body.title.trim() : "";

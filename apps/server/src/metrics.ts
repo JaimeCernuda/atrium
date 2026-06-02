@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
-import { requireUser } from "./auth.js";
+import { requirePermission } from "./permissions.js";
 
 export interface RoomTimeRow {
   userId: string;
@@ -34,14 +34,7 @@ function parseRange(q: { from?: string; to?: string }): { from: Date; to: Date }
 
 export async function registerMetrics(app: FastifyInstance, config: Config): Promise<void> {
   async function requireAdmin(req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-    const user = await requireUser(req, reply, config.session.cookieName);
-    if (!user) return false;
-    const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-    if (!dbUser?.isAdmin) {
-      reply.code(403).send({ error: "admin only" });
-      return false;
-    }
-    return true;
+    return Boolean(await requirePermission(req, reply, "view_metrics", config.session.cookieName));
   }
 
   app.get<{ Querystring: { from?: string; to?: string } }>("/api/metrics/room-time", async (req, reply) => {

@@ -18,6 +18,8 @@ import { registerDigest } from "./digest.js";
 import { registerReminders } from "./reminders.js";
 import { registerBotTokens } from "./bot-tokens.js";
 import { registerSubmissions } from "./submissions.js";
+import { registerRoles, seedRolesIfEmpty } from "./roles.js";
+import { registerMembers } from "./members.js";
 
 const config = loadConfig();
 
@@ -39,7 +41,10 @@ await registerDigest(app, config);
 await registerReminders(app, config);
 await registerBotTokens(app, config);
 await registerSubmissions(app, config);
+await registerRoles(app, config);
+await registerMembers(app, config);
 await seedRoomsIfEmpty(config.rooms);
+await seedRolesIfEmpty();
 await closeOrphanedSessions();
 
 app.get("/healthz", async () => ({ ok: true }));

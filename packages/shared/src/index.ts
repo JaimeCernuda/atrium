@@ -9,12 +9,54 @@ export interface Room {
   locked?: boolean;
 }
 
+/**
+ * Permission vocabulary. Keys are code-defined (they map to server enforcement
+ * points); which roles HOLD each permission is DB data editable at /admin/roles.
+ * The server's PERMISSION_KEYS list (apps/server/src/permissions.ts) is the
+ * runtime source of truth; the web reads it from GET /api/roles `allKeys`.
+ */
+export type PermissionKey =
+  | "manage_rooms"
+  | "manage_members"
+  | "manage_roles"
+  | "manage_bots"
+  | "view_metrics"
+  | "view_all_submissions"
+  | "submit"
+  | "create_reminders"
+  | "write_digest"
+  | "own_office";
+
+export interface RoleInfo {
+  id: string;
+  name: string;
+  permissions: PermissionKey[];
+  sortOrder: number;
+  isProtected: boolean;
+  memberCount: number;
+}
+
 export interface User {
   id: string;
   name: string;
   email: string;
   imageUrl?: string;
-  isAdmin?: boolean;
+  isAdmin?: boolean; // deprecated: equivalent to role === "owner"; kept for back-compat
+  role?: string;
+  permissions?: PermissionKey[];
+}
+
+export interface Member {
+  id: string;
+  name: string;
+  email: string;
+  imageUrl: string | null;
+  role: string;
+  roleName: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  office: { id: string; name: string } | null;
+  submissionCount: number;
 }
 
 export interface PresenceUser extends User {

@@ -12,6 +12,7 @@ import {
   closePresenceSessions,
   openMeetingSession,
   openPresenceSession,
+  touchLastSeen,
 } from "./db.js";
 import { findRoomOwnedBy, isRoomEnterableBy } from "./rooms.js";
 
@@ -72,9 +73,13 @@ export function createPresenceServer(httpServer: HttpServer): {
     const presenceUser: PresenceUser = { ...user, socketId: socket.id, inMeeting: false };
     users.set(user.id, presenceUser);
     (socketByUser.get(user.id) ?? socketByUser.set(user.id, new Set()).get(user.id)!).add(socket.id);
-    socket.emit("presence:snapshot", snapshot());
 
-    // Auto-join the user's office on first socket if they own one and aren't already placed.
+    // "Last login" tracks real activity (socket connects), not just OAuth round-trips.
+    touchLastSeen(user.id).catch((err) => console.error("touchLastSeen", err));
+
+    // Auto-join the user's office BEFORE emitting the snapshot, so the client
+    // sees itself already placed and skips its join-Lobby fallback (avoids the
+    // race where an office owner briefly lands in the Lobby on reload).
     if (!userRoom.has(user.id)) {
       try {
         const officeId = await findRoomOwnedBy(user.email);
@@ -83,6 +88,7 @@ export function createPresenceServer(httpServer: HttpServer): {
         console.error("autoJoin office", err);
       }
     }
+    socket.emit("presence:snapshot", snapshot());
 
     socket.on("presence:join", async (roomId) => {
       const check = await isRoomEnterableBy(roomId, user.email);
