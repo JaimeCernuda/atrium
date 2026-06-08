@@ -3,6 +3,7 @@ import type { Digest, DigestSummary } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
+import { requirePermission } from "./permissions.js";
 import { requireBotScope } from "./bot-auth.js";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -128,13 +129,8 @@ export async function registerDigest(app: FastifyInstance, config: Config): Prom
   );
 
   app.delete<{ Params: { date: string } }>("/api/digest/:date", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
+    const user = await requirePermission(req, reply, "write_digest", config.session.cookieName);
     if (!user) return;
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: { isAdmin: true },
-    });
-    if (!dbUser?.isAdmin) return reply.code(403).send({ error: "admin_required" });
 
     const date = parseDate(req.params.date);
     if (!date) return reply.code(400).send({ error: "invalid_date" });

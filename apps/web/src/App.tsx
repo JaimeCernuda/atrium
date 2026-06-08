@@ -8,16 +8,22 @@ import {
   lighten,
 } from "@mui/material";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { useStore } from "./store";
+import { can, useStore } from "./store";
 import { useBootstrap } from "./hooks/useBootstrap";
 import { Login } from "./pages/Login";
 import { Office } from "./pages/Office";
 import { Metrics } from "./pages/Metrics";
 import { AdminRooms } from "./pages/AdminRooms";
 import { AdminBotTokens } from "./pages/AdminBotTokens";
+import { AdminRoles } from "./pages/AdminRoles";
+import { AdminMembers } from "./pages/AdminMembers";
 import { DigestList } from "./pages/Digest/List";
 import { DigestDay } from "./pages/Digest/Day";
 import { Reminders } from "./pages/Reminders";
+import { Submit } from "./pages/Submit";
+import { SubmitEdit } from "./pages/SubmitEdit";
+import { AdminSubmissions } from "./pages/AdminSubmissions";
+import { MemberSubmissions } from "./pages/MemberSubmissions";
 import { AppShell } from "./components/AppShell";
 import { resolveMode } from "./prefs";
 
@@ -95,7 +101,17 @@ export function App() {
                 <Route path="/" element={<Office />} />
                 <Route path="/digest" element={<DigestList />} />
                 <Route path="/reminders" element={<Reminders />} />
-                {user.isAdmin && (
+                {can(user, "submit") && <Route path="/submit" element={<Submit />} />}
+                {can(user, "submit") && <Route path="/submit/edit/:id" element={<SubmitEdit />} />}
+                <Route
+                  path="/members/:id/submissions"
+                  element={
+                    <AppShell>
+                      <MemberSubmissions />
+                    </AppShell>
+                  }
+                />
+                {can(user, "view_metrics") && (
                   <Route
                     path="/admin/metrics"
                     element={
@@ -105,7 +121,7 @@ export function App() {
                     }
                   />
                 )}
-                {user.isAdmin && (
+                {can(user, "manage_rooms") && (
                   <Route
                     path="/admin/rooms"
                     element={
@@ -115,12 +131,42 @@ export function App() {
                     }
                   />
                 )}
-                {user.isAdmin && (
+                {can(user, "manage_bots") && (
                   <Route
                     path="/admin/bot-tokens"
                     element={
                       <AppShell>
                         <AdminBotTokens />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "view_all_submissions") && (
+                  <Route
+                    path="/admin/submissions"
+                    element={
+                      <AppShell>
+                        <AdminSubmissions />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_roles") && (
+                  <Route
+                    path="/admin/roles"
+                    element={
+                      <AppShell>
+                        <AdminRoles />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_members") && (
+                  <Route
+                    path="/admin/members"
+                    element={
+                      <AppShell>
+                        <AdminMembers />
                       </AppShell>
                     }
                   />

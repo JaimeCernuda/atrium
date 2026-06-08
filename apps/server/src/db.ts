@@ -9,25 +9,34 @@ export async function upsertUser(
   user: { id: string; email: string; name: string; imageUrl?: string },
   adminEmails: string[] = [],
 ): Promise<void> {
-  const isAdmin = adminEmails.includes(user.email.toLowerCase());
+  const isAdminByEmail = adminEmails.includes(user.email.toLowerCase());
   await prisma.user.upsert({
     where: { id: user.id },
-    // On re-login: refresh email/admin/lastSeen but DO NOT overwrite the
-    // user's customized name/imageUrl. Those stick until the user changes
-    // them via profile edit / avatar upload.
+    // On re-login: refresh email/lastSeen but DO NOT overwrite the user's
+    // customized name/imageUrl, nor a role assigned via the Members page.
+    // ADMIN_EMAILS acts as a bootstrap floor: those emails are always owners.
     update: {
       email: user.email,
-      isAdmin,
       lastSeenAt: new Date(),
+      ...(isAdminByEmail ? { isAdmin: true, role: "owner" } : {}),
     },
     create: {
       id: user.id,
       email: user.email,
       name: user.name,
       imageUrl: user.imageUrl,
-      isAdmin,
+      isAdmin: isAdminByEmail,
+      role: isAdminByEmail ? "owner" : "external",
       lastSeenAt: new Date(),
     },
+  });
+}
+
+/** Mark a user as seen now (called on socket connect, not just OAuth login). */
+export async function touchLastSeen(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: { lastSeenAt: new Date() },
   });
 }
 

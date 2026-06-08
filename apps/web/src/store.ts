@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import type { ChatMessage, PingPayload, PresenceUser, Room, User } from "@atrium/shared";
+import type {
+  ChatMessage,
+  PermissionKey,
+  PingPayload,
+  PresenceUser,
+  Room,
+  User,
+} from "@atrium/shared";
 import { loadPrefs, savePrefs, type ThemeMode, type UserPrefs } from "./prefs";
 
 interface AtriumState {
@@ -184,4 +191,14 @@ export const useStore = create<AtriumState>((set) => ({
 // Helper for consumers that aren't React components
 export function getState(): ReturnType<typeof useStore.getState> {
   return useStore.getState();
+}
+
+/** Whether a user holds a permission (UI gating only; the server is the backstop). */
+export function can(user: User | null, perm: PermissionKey): boolean {
+  return Boolean(user?.permissions?.includes(perm));
+}
+
+/** Reactive permission check for components. */
+export function useHasPermission(perm: PermissionKey): boolean {
+  return useStore((s) => can(s.user, perm));
 }

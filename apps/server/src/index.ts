@@ -17,6 +17,9 @@ import { registerAvatars } from "./avatars.js";
 import { registerDigest } from "./digest.js";
 import { registerReminders } from "./reminders.js";
 import { registerBotTokens } from "./bot-tokens.js";
+import { registerSubmissions } from "./submissions.js";
+import { registerRoles, seedRolesIfEmpty } from "./roles.js";
+import { registerMembers } from "./members.js";
 
 const config = loadConfig();
 
@@ -28,7 +31,7 @@ mkdirSync(avatarDir, { recursive: true });
 
 await app.register(cors, { origin: true, credentials: true });
 await app.register(cookie);
-await app.register(multipart, { limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024, files: 15 } });
 await registerAuth(app, config, broadcasterRef);
 await registerAvatars(app, config, avatarDir, broadcasterRef);
 await registerRooms(app, config);
@@ -37,7 +40,11 @@ await registerChat(app, config, broadcasterRef);
 await registerDigest(app, config);
 await registerReminders(app, config);
 await registerBotTokens(app, config);
+await registerSubmissions(app, config);
+await registerRoles(app, config);
+await registerMembers(app, config);
 await seedRoomsIfEmpty(config.rooms);
+await seedRolesIfEmpty();
 await closeOrphanedSessions();
 
 app.get("/healthz", async () => ({ ok: true }));

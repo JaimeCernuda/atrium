@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import NotificationsActiveIcon from "@mui/icons-material/NotificationsActive";
 import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
+import ArticleIcon from "@mui/icons-material/Article";
 import HeadsetMicIcon from "@mui/icons-material/HeadsetMic";
 import MeetingRoomIcon from "@mui/icons-material/MeetingRoom";
 import VideocamIcon from "@mui/icons-material/Videocam";
@@ -22,7 +23,8 @@ import DoorbellIcon from "@mui/icons-material/Doorbell";
 import LockIcon from "@mui/icons-material/Lock";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
 import PaletteIcon from "@mui/icons-material/Palette";
-import { useStore } from "../store";
+import { useNavigate } from "react-router-dom";
+import { can, useStore } from "../store";
 import { useState } from "react";
 import type { PresenceUser, Room } from "@atrium/shared";
 import { getSocket } from "../socket";
@@ -43,6 +45,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   const me = useStore((s) => s.user);
   const setRooms = useStore((s) => s.setRooms);
   const rooms = useStore((s) => s.rooms);
+  const navigate = useNavigate();
 
   const isOwner = !!me?.email && room.ownerEmail === me.email;
   const locked = !!room.locked;
@@ -304,6 +307,17 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           <ChatBubbleOutlineIcon fontSize="small" sx={{ mr: 1 }} />
           Send message
         </MenuItem>
+        {menuState && (menuState.user.id === me?.id || can(me, "view_all_submissions")) && (
+          <MenuItem
+            onClick={() => {
+              navigate(`/members/${menuState.user.id}/submissions`);
+              setMenuState(null);
+            }}
+          >
+            <ArticleIcon fontSize="small" sx={{ mr: 1 }} />
+            View submissions
+          </MenuItem>
+        )}
       </Menu>
     </Card>
     {isOwner && (

@@ -14,7 +14,8 @@ import {
 } from "@mui/material";
 import ChatIcon from "@mui/icons-material/Chat";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
-import { useStore } from "../store";
+import type { PermissionKey } from "@atrium/shared";
+import { can, useStore } from "../store";
 import { SettingsMenu } from "./SettingsMenu";
 import { UserMenu } from "./UserMenu";
 import { ChatPanel } from "./ChatPanel";
@@ -23,7 +24,7 @@ import { AdminMenu } from "./AdminMenu";
 
 const DRAWER_WIDTH = 360;
 
-const TABS: Array<{ label: string; path: string }> = [
+const TABS: Array<{ label: string; path: string; permission?: PermissionKey }> = [
   { label: "Office", path: "/" },
   { label: "Digest", path: "/digest" },
   { label: "Reminders", path: "/reminders" },
@@ -104,7 +105,7 @@ export function AppShell({ children }: Props) {
             indicatorColor="primary"
             sx={{ minHeight: 40 }}
           >
-            {TABS.map((t) => (
+            {TABS.filter((t) => !t.permission || can(user, t.permission)).map((t) => (
               <Tab
                 key={t.path}
                 value={t.path}
@@ -133,7 +134,7 @@ export function AppShell({ children }: Props) {
                     <ChatIcon />
                   </Badge>
                 </IconButton>
-                {user.isAdmin && <AdminMenu />}
+                <AdminMenu />
                 <SettingsMenu />
                 <UserMenu />
               </>

@@ -1,8 +1,9 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { OfficeDecoration, OfficeLink, Room } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
+import { requirePermission, userHasPermission } from "./permissions.js";
 
 function toApi(room: {
   id: string;
@@ -27,14 +28,6 @@ function toApi(room: {
     decorations: (room.decorations as OfficeDecoration | null) ?? undefined,
   };
 }
-
-const OFFICE_OWNERS: Record<string, string> = {
-  Anthony: "akougkas@illinoistech.edu",
-  Luke: "llogan@illinoistech.edu",
-  Jaime: "jcernudagarcia@illinoistech.edu",
-  Kun: "kfeng1@illinoistech.edu",
-  Eneko: "egonzalez30@illinoistech.edu",
-};
 
 const COLOR_TO_CATEGORY: Record<string, string> = {
   "#9e9e9e": "Common",
@@ -106,13 +99,8 @@ export async function seedRoomsIfEmpty(rooms: Room[]): Promise<void> {
     }
   }
 
-  // Map offices to their owners (idempotent).
-  for (const [name, email] of Object.entries(OFFICE_OWNERS)) {
-    await prisma.room.updateMany({
-      where: { name, category: "Offices", ownerEmail: null },
-      data: { ownerEmail: email },
-    });
-  }
+  // Note: office ownership (Room.ownerEmail) is now assigned from the admin
+  // Members page rather than a hard-coded seed map.
 }
 
 export async function findRoomOwnedBy(email: string): Promise<string | null> {
@@ -137,17 +125,6 @@ export async function isRoomEnterableBy(
 }
 
 export async function registerRooms(app: FastifyInstance, config: Config): Promise<void> {
-  async function requireAdmin(req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-    const user = await requireUser(req, reply, config.session.cookieName);
-    if (!user) return false;
-    const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-    if (!dbUser?.isAdmin) {
-      reply.code(403).send({ error: "admin only" });
-      return false;
-    }
-    return true;
-  }
-
   app.get("/api/rooms", async (req, reply) => {
     const user = await requireUser(req, reply, config.session.cookieName);
     if (!user) return reply;
@@ -156,7 +133,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   });
 
   app.post<{ Body: Room }>("/api/rooms", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const body = req.body;
     if (!body?.id || !body?.name) {
       return reply.code(400).send({ error: "id and name required" });
@@ -177,7 +154,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   });
 
   app.patch<{ Params: { id: string }; Body: Partial<Room> }>("/api/rooms/:id", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { id } = req.params;
     const body = req.body ?? {};
     const updated = await prisma.room.update({
@@ -194,7 +171,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   });
 
   app.delete<{ Params: { id: string } }>("/api/rooms/:id", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     await prisma.room.delete({ where: { id: req.params.id } });
     return { ok: true };
   });
@@ -207,9 +184,8 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       if (!user) return reply;
       const room = await prisma.room.findUnique({ where: { id: req.params.id } });
       if (!room) return reply.code(404).send({ error: "room not found" });
-      const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
       const isOwner = room.ownerEmail === user.email;
-      if (!isOwner && !dbUser?.isAdmin) {
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
         return reply.code(403).send({ error: "only the owner or an admin can lock this room" });
       }
       const updated = await prisma.room.update({
@@ -221,7 +197,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
   );
 
   app.post<{ Body: { order: string[] } }>("/api/rooms/reorder", async (req, reply) => {
-    if (!(await requireAdmin(req, reply))) return reply;
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { order } = req.body;
     if (!Array.isArray(order)) return reply.code(400).send({ error: "order must be an array" });
     await prisma.$transaction(
@@ -229,6 +205,31 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     );
     return { ok: true };
   });
+
+  // Decoration values are rendered into CSS (via MUI sx) and link hrefs for
+  // *everyone* in the office, so they are validated here, at the trust boundary.
+
+  // Accept only safe CSS colors: hex, rgb()/rgba()/hsl()/hsla() with numeric
+  // content, or a bare named color. Rejects anything that could break out of a
+  // CSS declaration (`;`, `}`, `url(`, `expression(`, etc.). Returns undefined
+  // for anything invalid so the field falls back to its default.
+  const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|(?:rgb|hsl)a?\([0-9.,%\s/]+\)|[a-zA-Z]{1,20})$/;
+  const safeColor = (v: unknown): string | undefined => {
+    if (typeof v !== "string") return undefined;
+    const s = v.trim().slice(0, 32);
+    return SAFE_COLOR.test(s) ? s : undefined;
+  };
+  // Links become clickable hrefs, so restrict to http(s) — blocks javascript:,
+  // data:, and other script-capable schemes that new URL() would otherwise pass.
+  const safeHttpUrl = (v: unknown): string | undefined => {
+    if (typeof v !== "string") return undefined;
+    try {
+      const u = new URL(v);
+      return u.protocol === "http:" || u.protocol === "https:" ? v.slice(0, 500) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   // Only the room owner can save decoration settings for their own room.
   app.patch<{ Params: { id: string }; Body: OfficeDecoration }>(
@@ -245,47 +246,50 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       const b = req.body ?? {};
       // Sanitize known scalar fields
       const decorations: OfficeDecoration = {};
-      if (typeof b.bgColor === "string") decorations.bgColor = b.bgColor.slice(0, 32);
+      const bgColor = safeColor(b.bgColor);
+      if (bgColor) decorations.bgColor = bgColor;
       if (b.bgGradient && typeof b.bgGradient === "object") {
         const { from, to, angle } = b.bgGradient as { from?: unknown; to?: unknown; angle?: unknown };
-        if (typeof from === "string" && typeof to === "string") {
+        const gFrom = safeColor(from);
+        const gTo = safeColor(to);
+        if (gFrom && gTo) {
           decorations.bgGradient = {
-            from: from.slice(0, 32),
-            to: to.slice(0, 32),
+            from: gFrom,
+            to: gTo,
             angle: typeof angle === "number" ? Math.round(angle) % 360 : 135,
           };
         }
       }
       if (["dots", "stripes", "grid"].includes(b.bgPattern as string))
         decorations.bgPattern = b.bgPattern;
-      if (typeof b.accentColor === "string") decorations.accentColor = b.accentColor.slice(0, 32);
+      const accentColor = safeColor(b.accentColor);
+      if (accentColor) decorations.accentColor = accentColor;
       if ([2, 4, 6].includes(b.borderWidth as number)) decorations.borderWidth = b.borderWidth;
       if (["solid", "dashed", "dotted"].includes(b.borderStyle as string))
         decorations.borderStyle = b.borderStyle;
       if (typeof b.glow === "boolean") decorations.glow = b.glow;
       if (typeof b.emoji === "string") decorations.emoji = b.emoji.slice(0, 8);
       if (typeof b.badge === "string") decorations.badge = b.badge.slice(0, 24);
-      if (typeof b.badgeColor === "string") decorations.badgeColor = b.badgeColor.slice(0, 32);
+      const badgeColor = safeColor(b.badgeColor);
+      if (badgeColor) decorations.badgeColor = badgeColor;
       if (typeof b.motto === "string") decorations.motto = b.motto.slice(0, 80);
-      if (typeof b.nameColor === "string") decorations.nameColor = b.nameColor.slice(0, 32);
+      const nameColor = safeColor(b.nameColor);
+      if (nameColor) decorations.nameColor = nameColor;
       if (typeof b.nameUppercase === "boolean") decorations.nameUppercase = b.nameUppercase;
       if (typeof b.nameItalic === "boolean") decorations.nameItalic = b.nameItalic;
-      // Sanitize links array (max 8)
+      // Sanitize links array (max 8); only http(s) URLs become clickable chips.
       if (Array.isArray(b.links)) {
         decorations.links = (b.links as unknown[])
           .slice(0, 8)
-          .filter((l): l is OfficeLink => {
-            if (typeof l !== "object" || l === null) return false;
+          .map((l): OfficeLink | null => {
+            if (typeof l !== "object" || l === null) return null;
             const { id, label, url } = l as Record<string, unknown>;
-            if (typeof id !== "string" || typeof label !== "string" || typeof url !== "string") return false;
-            try { new URL(url); } catch { return false; }
-            return true;
+            if (typeof id !== "string" || typeof label !== "string") return null;
+            const safeUrl = safeHttpUrl(url);
+            if (!safeUrl) return null;
+            return { id: id.slice(0, 40), label: label.slice(0, 40), url: safeUrl };
           })
-          .map((l) => ({
-            id: String(l.id).slice(0, 40),
-            label: String(l.label).slice(0, 40),
-            url: String(l.url).slice(0, 500),
-          }));
+          .filter((l): l is OfficeLink => l !== null);
       }
       const updated = await prisma.room.update({
         where: { id: req.params.id },

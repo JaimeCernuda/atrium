@@ -1,8 +1,8 @@
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance } from "fastify";
 import type { BotTokenCreated, BotTokenInfo } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
-import { requireUser } from "./auth.js";
+import { requirePermission } from "./permissions.js";
 import { generateBotToken } from "./bot-auth.js";
 
 const ALLOWED_SCOPES = new Set([
@@ -10,15 +10,6 @@ const ALLOWED_SCOPES = new Set([
   "reminders:read",
   "reminders:write",
 ]);
-
-async function verifyAdmin(userId: string, reply: FastifyReply): Promise<boolean> {
-  const row = await prisma.user.findUnique({ where: { id: userId }, select: { isAdmin: true } });
-  if (!row?.isAdmin) {
-    reply.code(403).send({ error: "admin_required" });
-    return false;
-  }
-  return true;
-}
 
 function toInfo(row: {
   id: string;
@@ -38,9 +29,8 @@ function toInfo(row: {
 
 export async function registerBotTokens(app: FastifyInstance, config: Config): Promise<void> {
   app.get("/api/bot-tokens", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
+    const user = await requirePermission(req, reply, "manage_bots", config.session.cookieName);
     if (!user) return;
-    if (!(await verifyAdmin(user.id, reply))) return;
 
     const rows = await prisma.botToken.findMany({ orderBy: { createdAt: "desc" } });
     return reply.send({ items: rows.map(toInfo) });
@@ -49,9 +39,8 @@ export async function registerBotTokens(app: FastifyInstance, config: Config): P
   app.post<{ Body: { name?: string; scopes?: string[] } }>(
     "/api/bot-tokens",
     async (req, reply) => {
-      const user = await requireUser(req, reply, config.session.cookieName);
+      const user = await requirePermission(req, reply, "manage_bots", config.session.cookieName);
       if (!user) return;
-      if (!(await verifyAdmin(user.id, reply))) return;
 
       const body = req.body ?? {};
       const name = typeof body.name === "string" ? body.name.trim() : "";
@@ -76,9 +65,8 @@ export async function registerBotTokens(app: FastifyInstance, config: Config): P
   );
 
   app.delete<{ Params: { id: string } }>("/api/bot-tokens/:id", async (req, reply) => {
-    const user = await requireUser(req, reply, config.session.cookieName);
+    const user = await requirePermission(req, reply, "manage_bots", config.session.cookieName);
     if (!user) return;
-    if (!(await verifyAdmin(user.id, reply))) return;
 
     await prisma.botToken.deleteMany({ where: { id: req.params.id } });
     return reply.send({ ok: true });

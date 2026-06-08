@@ -13,11 +13,26 @@ model User {
   name             String
   imageUrl         String?
   isAdmin          Boolean           @default(false)
+  role             String            @default("external") // soft ref to Role.id
   createdAt        DateTime          @default(now())
   lastSeenAt       DateTime?
   presenceSessions PresenceSession[]
   meetingSessions  MeetingSession[]
   sentMessages     Message[]         @relation("SentMessages")
+
+  @@index([role])
+}
+
+model Role {
+  id          String   @id // slug: "owner", "professor", "phd", "student", "external", or custom
+  name        String // display label, editable
+  permissions String[] // subset of PERMISSION_KEYS (see src/permissions.ts)
+  sortOrder   Int      @default(0)
+  isProtected Boolean  @default(false) // owner/external: cannot be deleted
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([sortOrder])
 }
 
 model Room {
@@ -104,6 +119,37 @@ model Reminder {
   @@index([dueAt])
   @@index([createdById])
   @@index([createdByBotId])
+}
+
+model Submission {
+  id             String    @id @default(cuid())
+  kind           String // "paper" | "poster"
+  citationKey    String
+  title          String
+  authors        String
+  venue          String
+  year           Int
+  pubType        String? // Conference/Journal/Workshop/Preprint (papers only)
+  funding        String // grant list or the literal "none"
+  resources      String[]  @default([]) // NSF cyberinfrastructure used: Chameleon, Delta, DeltaAI
+  githubUrl      String // repo url or the literal "none"
+  doi            String? // posters optional; papers set at edit
+  abstract       String
+  notes          String?
+  submitterId    String
+  submitterName  String
+  submitterEmail String
+  files          Json      @default("[]") // [{role, filename, publicUrl}]
+  stage          String    @default("new") // paper: new -> edited
+  status         String    @default("received") // received|delivering|delivered|failed
+  deliveryLog    String?
+  deliveredAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([citationKey])
+  @@index([submitterId])
+  @@index([status])
 }
 
 model BotToken {

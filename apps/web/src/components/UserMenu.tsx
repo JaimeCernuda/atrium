@@ -17,9 +17,11 @@ import {
   Typography,
 } from "@mui/material";
 import AccountCircleIcon from "@mui/icons-material/AccountCircle";
+import ArticleIcon from "@mui/icons-material/Article";
 import LogoutIcon from "@mui/icons-material/Logout";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
 import DeleteIcon from "@mui/icons-material/Delete";
+import { useNavigate } from "react-router-dom";
 import type { User } from "@atrium/shared";
 import { useStore } from "../store";
 import { AvatarCropper } from "./AvatarCropper";
@@ -27,6 +29,7 @@ import { AvatarCropper } from "./AvatarCropper";
 export function UserMenu() {
   const user = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
+  const navigate = useNavigate();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [name, setName] = useState("");
@@ -140,6 +143,17 @@ export function UserMenu() {
             <AccountCircleIcon fontSize="small" />
           </ListItemIcon>
           Edit profile
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            navigate("/members/me/submissions");
+          }}
+        >
+          <ListItemIcon>
+            <ArticleIcon fontSize="small" />
+          </ListItemIcon>
+          My submissions
         </MenuItem>
         <MenuItem onClick={logout}>
           <ListItemIcon>
