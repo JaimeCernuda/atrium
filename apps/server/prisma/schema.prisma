@@ -130,6 +130,7 @@ model Submission {
   year           Int
   pubType        String? // Conference/Journal/Workshop/Preprint (papers only)
   funding        String // grant list or the literal "none"
+  resources      String[]  @default([]) // NSF cyberinfrastructure used: Chameleon, Delta, DeltaAI
   githubUrl      String // repo url or the literal "none"
   doi            String? // posters optional; papers set at edit
   abstract       String

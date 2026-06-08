@@ -66,6 +66,13 @@ export function SubmissionsTable({ items, showSubmitter = false, renderActions }
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
                   {s.title}
                 </Typography>
+                {s.resources.length > 0 && (
+                  <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 0.5 }}>
+                    {s.resources.map((r) => (
+                      <Chip key={r} size="small" color="info" variant="outlined" label={r} />
+                    ))}
+                  </Box>
+                )}
               </TableCell>
               <TableCell>{s.kind}</TableCell>
               {showSubmitter && (

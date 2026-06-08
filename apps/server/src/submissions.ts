@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
-import type { Submission, SubmissionFile } from "@atrium/shared";
+import type { Submission, SubmissionFile, SubmissionResource } from "@atrium/shared";
+import { SUBMISSION_RESOURCES } from "@atrium/shared";
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
@@ -34,6 +35,21 @@ function sniff(buf: Buffer, want: Sniff): boolean {
 function looksLikeBib(buf: Buffer): boolean {
   const s = buf.toString("utf8");
   return /@\w+\s*\{\s*[^,\s]+\s*,/.test(s);
+}
+
+const RESOURCE_SET = new Set<string>(SUBMISSION_RESOURCES);
+
+// Parse the comma-separated `resources` form field into a validated, de-duped,
+// canonically-ordered list. Returns null if any tag is not a known resource.
+function parseResources(raw: string | undefined): SubmissionResource[] | null {
+  const picked = new Set(
+    (raw ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  for (const r of picked) if (!RESOURCE_SET.has(r)) return null;
+  return SUBMISSION_RESOURCES.filter((r) => picked.has(r));
 }
 
 // role -> { sniff kind, suffix builder from key }
@@ -90,7 +106,8 @@ async function parseMultipart(req: FastifyRequest): Promise<Parsed> {
 
 export function toApi(row: {
   id: string; kind: string; citationKey: string; title: string; authors: string;
-  venue: string; year: number; pubType: string | null; funding: string; githubUrl: string;
+  venue: string; year: number; pubType: string | null; funding: string; resources: string[];
+  githubUrl: string;
   doi: string | null; abstract: string; notes: string | null; submitterName: string;
   submitterEmail: string; files: unknown; stage: string; status: string;
   deliveryLog: string | null; deliveredAt: Date | null; createdAt: Date; updatedAt: Date;
@@ -105,6 +122,7 @@ export function toApi(row: {
     year: row.year,
     pubType: row.pubType,
     funding: row.funding,
+    resources: (row.resources as SubmissionResource[]) ?? [],
     githubUrl: row.githubUrl,
     doi: row.doi,
     abstract: row.abstract,
@@ -194,6 +212,9 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     if (f.github_url !== "none" && !GH_RE.test(f.github_url ?? "")) return bad(reply, "invalid github_url");
     if (f.confirmation !== "true") return bad(reply, "must confirm rights to share");
 
+    const resources = parseResources(f.resources);
+    if (resources === null) return bad(reply, "invalid resource tag");
+
     let pubType: string | null = null;
     if (kind === "paper") {
       pubType = f.type ?? "";
@@ -217,7 +238,7 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     const row = await prisma.submission.create({
       data: {
         kind, citationKey: key, title: (f.title ?? "").trim(), authors: (f.authors ?? "").trim(),
-        venue: (f.venue ?? "").trim(), year, pubType, funding: (f.funding ?? "").trim(),
+        venue: (f.venue ?? "").trim(), year, pubType, funding: (f.funding ?? "").trim(), resources,
         githubUrl: (f.github_url ?? "").trim(), doi, abstract: (f.abstract ?? "").trim(),
         notes: (f.notes ?? "").trim() || null,
         submitterId: user.id, submitterName: user.name, submitterEmail: user.email,
@@ -244,6 +265,8 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     if (!KEY_RE.test(origKey)) return bad(reply, "invalid original_citation_key");
     if (!KEY_RE.test(finalKey)) return bad(reply, "invalid final_citation_key");
     if (!doi) return bad(reply, "doi required");
+    const resources = parseResources(f.resources);
+    if (resources === null) return bad(reply, "invalid resource tag");
 
     const existing = await prisma.submission.findFirst({ where: { citationKey: origKey, kind: "paper" } });
     if (!existing) return bad(reply, `no matching paper submission for key "${origKey}"`);
@@ -280,7 +303,7 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     const row = await prisma.submission.update({
       where: { id: existing.id },
       data: {
-        citationKey: finalKey, doi, files: merged as unknown as Prisma.InputJsonValue, stage: "edited", status: "received",
+        citationKey: finalKey, doi, resources, files: merged as unknown as Prisma.InputJsonValue, stage: "edited", status: "received",
         notes: (f.notes ?? "").trim() || existing.notes,
       },
     });

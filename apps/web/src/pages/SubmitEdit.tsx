@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Alert,
+  Box,
   Button,
   Chip,
   Container,
@@ -14,9 +15,11 @@ import {
 } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import { useNavigate, useParams } from "react-router-dom";
-import type { Submission } from "@atrium/shared";
+import type { Submission, SubmissionResource } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
 import { FileDrop } from "../components/FileDrop";
+import { ResourcePicker } from "../components/ResourcePicker";
+import { AcknowledgmentsDialog } from "../components/AcknowledgmentsDialog";
 import { CAMERA_READY_FILES, PAPER_EDIT_FILES } from "../submission-slots";
 
 /**
@@ -31,7 +34,9 @@ export function SubmitEdit() {
   const [notFound, setNotFound] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<Record<string, File | null>>({});
+  const [resources, setResources] = useState<SubmissionResource[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
+  const [ackOpen, setAckOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +54,7 @@ export function SubmitEdit() {
           return;
         }
         setSubmission(found);
+        setResources(found.resources ?? []);
         setFields({
           final_citation_key: found.citationKey,
           doi: found.doi && found.doi !== "none" ? found.doi : "",
@@ -69,6 +75,7 @@ export function SubmitEdit() {
     fd.append("original_citation_key", submission.citationKey);
     fd.append("final_citation_key", fields.final_citation_key ?? "");
     fd.append("doi", fields.doi ?? "");
+    fd.append("resources", resources.join(","));
     fd.append("notes", fields.notes ?? "");
 
     for (const slot of slots) {
@@ -168,6 +175,14 @@ export function SubmitEdit() {
                 helperText="Should match the DOI inside your updated .bib and .txt citations."
               />
 
+              <ResourcePicker selected={resources} onChange={setResources} />
+
+              <Box>
+                <Button variant="outlined" onClick={() => setAckOpen(true)}>
+                  Generate acknowledgments
+                </Button>
+              </Box>
+
               <Divider textAlign="left">
                 <Typography variant="caption" color="text.secondary">
                   Updated files
@@ -216,6 +231,13 @@ export function SubmitEdit() {
                 {busy ? "Submitting…" : "Submit update"}
               </Button>
             </Stack>
+
+            <AcknowledgmentsDialog
+              open={ackOpen}
+              onClose={() => setAckOpen(false)}
+              funding={submission.funding === "none" ? "" : submission.funding}
+              resources={resources}
+            />
           </>
         )}
       </Container>

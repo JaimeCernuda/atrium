@@ -134,6 +134,11 @@ export interface FundingGrant {
   grant: string;
   agency: string;
   title: string;
+  /** Acknowledgment-generator fields (optional; absent ones fall back to parsing `grant`). */
+  org?: "NSF" | "DOE"; // funding organization
+  office?: string; // full office text, e.g. "Office of Advanced Cyberinfrastructure (OAC)"
+  instrument?: "grant" | "award" | "contract"; // -> "Grant No(s)." / "Award Number(s)" / "Contract(s)"
+  awardId?: string; // identifier listed in the ack, e.g. "2411318" or "DE-SC0023263"
 }
 
 export interface FundingList {
@@ -143,6 +148,14 @@ export interface FundingList {
 
 export type SubmissionKind = "paper" | "poster";
 export type SubmissionStatus = "received" | "delivering" | "delivered" | "failed";
+
+/**
+ * NSF cyberinfrastructure testbeds the lab uses. Tagged per submission so we can
+ * report usage and confirm proper acknowledgement. Delta and DeltaAI are distinct
+ * resources (separate NSF awards) and must never be collapsed into one tag.
+ */
+export const SUBMISSION_RESOURCES = ["Chameleon", "Delta", "DeltaAI"] as const;
+export type SubmissionResource = (typeof SUBMISSION_RESOURCES)[number];
 
 export interface SubmissionFile {
   role: string; // "pdf" | "source" | "bib" | "cite" | "slides-pptx" | "slides-pdf" | "poster" | "abstract"
@@ -160,6 +173,7 @@ export interface Submission {
   year: number;
   pubType: string | null;
   funding: string;
+  resources: SubmissionResource[];
   githubUrl: string;
   doi: string | null;
   abstract: string;

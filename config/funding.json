@@ -1,14 +1,14 @@
 {
   "active": [
-    { "project": "IOWarp", "grant": "NSF OAC-2411318", "agency": "NSF", "title": "IOWarp: Bending the I/O Fabric for Advancing AI-Infused Scientific Workflows" },
-    { "project": "ChronoLog", "grant": "NSF CSSI-2104013", "agency": "NSF", "title": "ChronoLog: A High-Performance Storage Infrastructure for Activity and Log Workloads" },
-    { "project": "LABIOS", "grant": "NSF OAC-2313154", "agency": "NSF", "title": "LABIOS: Storage Acceleration via Data Labeling and Asynchronous I/O" },
-    { "project": "StoreHub", "grant": "NSF CCRI-2346504", "agency": "NSF", "title": "StoreHub: A Community Infrastructure for Shaping the Future of Data Storage Research" },
-    { "project": "Coeus", "grant": "DOE DE-SC0023263", "agency": "DOE ASCR", "title": "Coeus: A Smart Memory and Storage Substrate for Data Discovery" },
-    { "project": "DTIO", "grant": "DOE DE-SC0024593", "agency": "DOE ASCR", "title": "DTIO: Data Stack for AI-driven Workflows" }
+    { "project": "IOWarp", "grant": "NSF OAC-2411318", "agency": "NSF", "title": "IOWarp: Bending the I/O Fabric for Advancing AI-Infused Scientific Workflows", "org": "NSF", "office": "Office of Advanced Cyberinfrastructure (OAC)", "instrument": "grant", "awardId": "2411318" },
+    { "project": "ChronoLog", "grant": "NSF CSSI-2104013", "agency": "NSF", "title": "ChronoLog: A High-Performance Storage Infrastructure for Activity and Log Workloads", "org": "NSF", "office": "Office of Advanced Cyberinfrastructure (OAC)", "instrument": "grant", "awardId": "2104013" },
+    { "project": "LABIOS", "grant": "NSF OAC-2313154", "agency": "NSF", "title": "LABIOS: Storage Acceleration via Data Labeling and Asynchronous I/O", "org": "NSF", "office": "Office of Advanced Cyberinfrastructure (OAC)", "instrument": "grant", "awardId": "2313154" },
+    { "project": "StoreHub", "grant": "NSF CCRI-2346504", "agency": "NSF", "title": "StoreHub: A Community Infrastructure for Shaping the Future of Data Storage Research", "org": "NSF", "office": "Division of Computer and Network Systems (CNS)", "instrument": "grant", "awardId": "2346504" },
+    { "project": "Coeus", "grant": "DOE DE-SC0023263", "agency": "DOE ASCR", "title": "Coeus: A Smart Memory and Storage Substrate for Data Discovery", "org": "DOE", "office": "Office of Science, Office of Advanced Scientific Computing Research (ASCR)", "instrument": "award", "awardId": "DE-SC0023263" },
+    { "project": "DTIO", "grant": "DOE DE-SC0024593", "agency": "DOE ASCR", "title": "DTIO: Data Stack for AI-driven Workflows", "org": "DOE", "office": "Office of Science, Office of Advanced Scientific Computing Research (ASCR)", "instrument": "award", "awardId": "DE-SC0024593" }
   ],
   "completed": [
-    { "project": "Hermes", "grant": "NSF OCI-1835764", "agency": "NSF", "title": "Hermes: Extending the HDF Library to Support Intelligent I/O Buffering for Deep Memory and Storage Hierarchy Systems" },
-    { "project": "IRIS", "grant": "NSF CSR-1814872", "agency": "NSF", "title": "IRIS: A Unified Data Access Framework for the Merging of Compute-Centric and Data-Centric Storage" }
+    { "project": "Hermes", "grant": "NSF OCI-1835764", "agency": "NSF", "title": "Hermes: Extending the HDF Library to Support Intelligent I/O Buffering for Deep Memory and Storage Hierarchy Systems", "org": "NSF", "office": "Office of Advanced Cyberinfrastructure (OAC)", "instrument": "grant", "awardId": "1835764" },
+    { "project": "IRIS", "grant": "NSF CSR-1814872", "agency": "NSF", "title": "IRIS: A Unified Data Access Framework for the Merging of Compute-Centric and Data-Centric Storage", "org": "NSF", "office": "Division of Computer and Network Systems (CNS)", "instrument": "grant", "awardId": "1814872" }
   ]
 }
