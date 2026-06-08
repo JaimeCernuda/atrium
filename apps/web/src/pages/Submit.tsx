@@ -3,6 +3,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   Container,
   Dialog,
   DialogActions,
@@ -13,6 +14,7 @@ import {
   IconButton,
   InputAdornment,
   MenuItem,
+  Snackbar,
   Stack,
   Switch,
   Table,
@@ -28,6 +30,7 @@ import {
 } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { useNavigate } from "react-router-dom";
 import type { FundingGrant, FundingList, SubmissionResource } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
@@ -50,6 +53,7 @@ export function Submit() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fundingOpen, setFundingOpen] = useState(false);
+  const [snack, setSnack] = useState<string | null>(null);
   const [funding, setFunding] = useState<FundingList>({ active: [], completed: [] });
 
   const set = (k: string) => (e: { target: { value: string } }) =>
@@ -62,14 +66,25 @@ export function Submit() {
       .catch(() => {});
   }, []);
 
-  const addGrant = (g: FundingGrant) => {
+  // Grants currently in the (comma-separated) funding field — drives the
+  // "added" indicator in the picker so it's clear a click registered.
+  const fundingParts = (fundingNone ? "" : fields.funding ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const selectedGrants = new Set(fundingParts);
+
+  // Click toggles the grant in/out of the field, with a snackbar confirmation
+  // (the field sits behind the dialog, so a click otherwise gives no feedback).
+  const toggleGrant = (g: FundingGrant) => {
     setFundingNone(false);
+    const has = selectedGrants.has(g.grant);
     setFields((p) => {
-      const cur = (p.funding ?? "").trim();
-      const parts = cur ? cur.split(",").map((s) => s.trim()).filter(Boolean) : [];
-      if (!parts.includes(g.grant)) parts.push(g.grant);
-      return { ...p, funding: parts.join(", ") };
+      const parts = (p.funding ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const next = has ? parts.filter((x) => x !== g.grant) : [...parts, g.grant];
+      return { ...p, funding: next.join(", ") };
     });
+    setSnack(`${has ? "Removed" : "Added"} ${g.project} (${g.grant})`);
   };
 
   const slots = kind === "poster" ? POSTER_FILES : PAPER_NEW_FILES;
@@ -335,23 +350,32 @@ export function Submit() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {funding[bucket].map((g) => (
-                        <TableRow
-                          key={g.grant + g.project}
-                          hover
-                          sx={{ cursor: "pointer" }}
-                          onClick={() => addGrant(g)}
-                        >
-                          <TableCell sx={{ fontWeight: 500 }}>{g.project}</TableCell>
-                          <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>
-                            {g.grant}
-                          </TableCell>
-                          <TableCell>{g.agency}</TableCell>
-                          <TableCell sx={{ color: "text.secondary", fontSize: "0.8rem" }}>
-                            {g.title}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {funding[bucket].map((g) => {
+                        const added = selectedGrants.has(g.grant);
+                        return (
+                          <TableRow
+                            key={g.grant + g.project}
+                            hover
+                            selected={added}
+                            sx={{ cursor: "pointer" }}
+                            onClick={() => toggleGrant(g)}
+                          >
+                            <TableCell sx={{ fontWeight: 500 }}>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                {added && <CheckCircleIcon color="success" fontSize="small" />}
+                                <span>{g.project}</span>
+                              </Stack>
+                            </TableCell>
+                            <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>
+                              {g.grant}
+                            </TableCell>
+                            <TableCell>{g.agency}</TableCell>
+                            <TableCell sx={{ color: "text.secondary", fontSize: "0.8rem" }}>
+                              {g.title}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </Box>
@@ -362,9 +386,23 @@ export function Submit() {
             </Typography>
           </DialogContent>
           <DialogActions>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${selectedGrants.size} selected`}
+              sx={{ mr: "auto" }}
+            />
             <Button onClick={() => setFundingOpen(false)}>Done</Button>
           </DialogActions>
         </Dialog>
+
+        <Snackbar
+          open={!!snack}
+          autoHideDuration={2000}
+          onClose={() => setSnack(null)}
+          message={snack}
+          anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        />
       </Container>
     </AppShell>
   );
