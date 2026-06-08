@@ -14,6 +14,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import { useNavigate, useParams } from "react-router-dom";
 import type { Submission } from "@atrium/shared";
 import { SubmissionsTable } from "../components/SubmissionsTable";
+import { AcknowledgmentsDialog } from "../components/AcknowledgmentsDialog";
 import { can, useStore } from "../store";
 
 interface MemberHeader {
@@ -36,6 +37,7 @@ export function MemberSubmissions() {
   const me = useStore((s) => s.user);
   const [data, setData] = useState<MemberSubmissionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ackOpen, setAckOpen] = useState(false);
 
   // The hub controls (new / edit) only appear on your own page if you can submit.
   const isSelf = id === "me" || (data !== null && data.member.id === me?.id);
@@ -96,10 +98,21 @@ export function MemberSubmissions() {
                 {data.member.email}
               </Typography>
             </Stack>
-            {canSubmit && (
-              <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate("/submit")}>
-                New submission
-              </Button>
+            {isSelf && (
+              <Stack direction="row" spacing={1}>
+                <Button variant="outlined" onClick={() => setAckOpen(true)}>
+                  Generate acknowledgments
+                </Button>
+                {canSubmit && (
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={() => navigate("/submit")}
+                  >
+                    New submission
+                  </Button>
+                )}
+              </Stack>
             )}
           </Stack>
 
@@ -125,6 +138,13 @@ export function MemberSubmissions() {
           />
         </>
       )}
+
+      <AcknowledgmentsDialog
+        open={ackOpen}
+        onClose={() => setAckOpen(false)}
+        funding=""
+        resources={[]}
+      />
     </Container>
   );
 }

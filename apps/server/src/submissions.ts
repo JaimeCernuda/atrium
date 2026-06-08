@@ -4,7 +4,11 @@ import { join, resolve } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { Prisma } from "@prisma/client";
 import type { Submission, SubmissionFile, SubmissionResource } from "@atrium/shared";
-import { SUBMISSION_RESOURCES } from "@atrium/shared";
+
+// Runtime list of valid resource tags. Defined locally (not imported as a value
+// from @atrium/shared, which ships as TS source and cannot be required at runtime)
+// but typed against the shared union so it fails to compile if the two drift.
+const SUBMISSION_RESOURCES: readonly SubmissionResource[] = ["Chameleon", "Delta", "DeltaAI"];
 import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";

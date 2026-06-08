@@ -33,7 +33,6 @@ import type { FundingGrant, FundingList, SubmissionResource } from "@atrium/shar
 import { AppShell } from "../components/AppShell";
 import { FileDrop } from "../components/FileDrop";
 import { ResourcePicker } from "../components/ResourcePicker";
-import { AcknowledgmentsDialog } from "../components/AcknowledgmentsDialog";
 import { PAPER_NEW_FILES, POSTER_FILES } from "../submission-slots";
 
 type Kind = "paper" | "poster";
@@ -51,7 +50,6 @@ export function Submit() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fundingOpen, setFundingOpen] = useState(false);
-  const [ackOpen, setAckOpen] = useState(false);
   const [funding, setFunding] = useState<FundingList>({ active: [], completed: [] });
 
   const set = (k: string) => (e: { target: { value: string } }) =>
@@ -240,14 +238,6 @@ export function Submit() {
           </Box>
           <ResourcePicker selected={resources} onChange={setResources} />
           <Box>
-            <Button variant="outlined" onClick={() => setAckOpen(true)}>
-              Generate acknowledgments
-            </Button>
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
-              Builds a LaTeX \section&#123;Acknowledgments&#125; block from your grants and resources.
-            </Typography>
-          </Box>
-          <Box>
             <TextField
               label="GitHub repo"
               required
@@ -375,13 +365,6 @@ export function Submit() {
             <Button onClick={() => setFundingOpen(false)}>Done</Button>
           </DialogActions>
         </Dialog>
-
-        <AcknowledgmentsDialog
-          open={ackOpen}
-          onClose={() => setAckOpen(false)}
-          funding={fundingNone ? "" : fields.funding ?? ""}
-          resources={resources}
-        />
       </Container>
     </AppShell>
   );

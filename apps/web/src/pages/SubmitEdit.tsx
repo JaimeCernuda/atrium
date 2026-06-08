@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   Chip,
   Container,
@@ -19,7 +18,6 @@ import type { Submission, SubmissionResource } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
 import { FileDrop } from "../components/FileDrop";
 import { ResourcePicker } from "../components/ResourcePicker";
-import { AcknowledgmentsDialog } from "../components/AcknowledgmentsDialog";
 import { CAMERA_READY_FILES, PAPER_EDIT_FILES } from "../submission-slots";
 
 /**
@@ -36,7 +34,6 @@ export function SubmitEdit() {
   const [files, setFiles] = useState<Record<string, File | null>>({});
   const [resources, setResources] = useState<SubmissionResource[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
-  const [ackOpen, setAckOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -177,12 +174,6 @@ export function SubmitEdit() {
 
               <ResourcePicker selected={resources} onChange={setResources} />
 
-              <Box>
-                <Button variant="outlined" onClick={() => setAckOpen(true)}>
-                  Generate acknowledgments
-                </Button>
-              </Box>
-
               <Divider textAlign="left">
                 <Typography variant="caption" color="text.secondary">
                   Updated files
@@ -231,13 +222,6 @@ export function SubmitEdit() {
                 {busy ? "Submitting…" : "Submit update"}
               </Button>
             </Stack>
-
-            <AcknowledgmentsDialog
-              open={ackOpen}
-              onClose={() => setAckOpen(false)}
-              funding={submission.funding === "none" ? "" : submission.funding}
-              resources={resources}
-            />
           </>
         )}
       </Container>

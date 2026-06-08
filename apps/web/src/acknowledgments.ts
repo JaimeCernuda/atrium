@@ -90,31 +90,36 @@ export function buildAcknowledgments(input: AckInput): string {
     sentences.push(`This material is based upon work supported ${inPart}by ${joinClauses(clauses)}.`);
   }
 
-  // --- NCSA Delta / DeltaAI via ACCESS (one combined sentence). ---
+  // --- Resource acknowledgements, unified by funding agency. ---
+  // NSF resources (ACCESS-provided NCSA systems + the Chameleon testbed) collapse
+  // into a single sentence; each program's required wording is preserved.
   const ncsa = resources.filter((r) => r === "Delta" || r === "DeltaAI");
-  if (ncsa.length > 0) {
-    const sys = `${joinAnd(ncsa)} system${ncsa.length > 1 ? "s" : ""}`;
+  const hasChameleon = resources.includes("Chameleon");
+  const accessClause = ncsa.length
+    ? `the ${joinAnd(ncsa)} system${ncsa.length > 1 ? "s" : ""} at the National Center for Supercomputing Applications through allocation ${ACCESS_ALLOCATION} from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS) program, which is supported by U.S. National Science Foundation grants #2138259, #2138286, #2138307, #2137603, and #2138296`
+    : "";
+
+  if (accessClause && hasChameleon) {
     sentences.push(
       tex(
-        `This work used the ${sys} at the National Center for Supercomputing Applications through allocation ${ACCESS_ALLOCATION} from the Advanced Cyberinfrastructure Coordination Ecosystem: Services & Support (ACCESS) program, which is supported by U.S. National Science Foundation grants #2138259, #2138286, #2138307, #2137603, and #2138296.`,
+        `This work used ${inPart}${accessClause}, as well as the Chameleon testbed, also supported by the National Science Foundation (NSF).`,
       ),
     );
-  }
-
-  // --- DOE Office of Science User Facilities. ---
-  const facilities = DOE_FACILITIES.filter((f) => doeFacilities.includes(f.key)).map((f) => f.name);
-  if (facilities.length > 0) {
-    const verb = facilities.length > 1 ? "are DOE Office of Science User Facilities" : "is a DOE Office of Science User Facility";
-    sentences.push(`This research used resources of the ${joinAnd(facilities)}, which ${verb}.`);
-  }
-
-  // --- Chameleon last, per the guide. ---
-  if (resources.includes("Chameleon")) {
+  } else if (accessClause) {
+    sentences.push(tex(`This work used ${inPart}${accessClause}.`));
+  } else if (hasChameleon) {
     sentences.push(
       tex(
         `Results presented in this paper were obtained ${inPart}using the Chameleon testbed supported by the National Science Foundation (NSF).`,
       ),
     );
+  }
+
+  // DOE Office of Science User Facilities collapse into a single sentence.
+  const facilities = DOE_FACILITIES.filter((f) => doeFacilities.includes(f.key)).map((f) => f.name);
+  if (facilities.length > 0) {
+    const verb = facilities.length > 1 ? "are DOE Office of Science User Facilities" : "is a DOE Office of Science User Facility";
+    sentences.push(`This research used ${inPart}resources of the ${joinAnd(facilities)}, which ${verb}.`);
   }
 
   return `\\section{Acknowledgments}\n${sentences.join(" ")}`;
