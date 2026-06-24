@@ -48,7 +48,11 @@ export function useZulipNotifications(): void {
       message: ChatMessage;
     }) => {
       const state = useStore.getState();
-      if (message.sender.id === selfTag()) return;
+      const self = selfTag();
+      // Until our own Zulip id is known we can't tell our own messages apart, so
+      // don't risk misclassifying a self-message as someone else's — skip it.
+      if (self == null) return;
+      if (message.sender.id === self) return;
 
       const key = `${channelId}:${topicName}`;
       const isActive =
@@ -86,7 +90,11 @@ export function useZulipNotifications(): void {
       message: ChatMessage;
     }) => {
       const state = useStore.getState();
-      if (message.sender.id === selfTag()) return;
+      const self = selfTag();
+      // Same self-guard as channel messages: don't notify until we can reliably
+      // distinguish our own outgoing DMs from incoming ones.
+      if (self == null) return;
+      if (message.sender.id === self) return;
 
       const activeKey = state.zulipActiveDmParticipants
         ? participantKey(state.zulipActiveDmParticipants)

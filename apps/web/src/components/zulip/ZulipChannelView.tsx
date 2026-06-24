@@ -37,6 +37,15 @@ export function ZulipChannelView({ meId }: { meId: string }) {
   const unreadTopics = useStore((s) => s.zulipUnreadTopics);
   const removeZulipUnreadTopic = useStore((s) => s.removeZulipUnreadTopic);
 
+  // If we arrive with an active channel (e.g. a room's "Open in Zulip" button)
+  // but the channel list hasn't loaded yet, request it so the active channel's
+  // name resolves and the topic view renders for the right channel.
+  useEffect(() => {
+    if (channels.length > 0) return;
+    if (!connected) return;
+    getSocket().emit("zulip:fetch-channels");
+  }, [channels.length, connected]);
+
   // Topic-first: as soon as a channel is open, load ALL its topics (once).
   // Also fixes the room-bound auto-focus path, which sets activeChannel without
   // a topic — entering the room now surfaces the channel's topics immediately.
@@ -91,11 +100,11 @@ export function ZulipChannelView({ meId }: { meId: string }) {
   if (activeChannel != null && activeTopic != null) {
     const channel = channels.find((c) => c.id === activeChannel);
     return (
-      <>
+      <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minHeight: 0 }}>
         <Stack
           direction="row"
           alignItems="center"
-          sx={{ p: 1, borderBottom: 1, borderColor: "divider", minWidth: 0 }}
+          sx={{ p: 1, borderBottom: 1, borderColor: "divider", minWidth: 0, flexShrink: 0 }}
         >
           <IconButton
             size="small"
@@ -117,7 +126,7 @@ export function ZulipChannelView({ meId }: { meId: string }) {
         </Stack>
         <MessageList messages={messages} meId={meId} />
         <Composer disabled={!connected} onSend={send} />
-      </>
+      </Box>
     );
   }
 

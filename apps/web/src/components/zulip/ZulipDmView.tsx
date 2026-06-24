@@ -26,7 +26,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import type { ZulipUser, ZulipUserGroup } from "@atrium/shared";
+import type { ChatMessage, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { participantKey } from "@atrium/shared";
 import { useStore } from "../../store";
 import { getSocket } from "../../socket";
@@ -124,9 +124,12 @@ export function ZulipDmView() {
   const activeParticipants = useStore((s) => s.zulipActiveDmParticipants);
   const setActiveParticipants = useStore((s) => s.setZulipActiveDmParticipants);
   const setDmMessages = useStore((s) => s.setZulipDmMessages);
+  const appendDmMessage = useStore((s) => s.appendZulipDmMessage);
+  const reconcileDmMessageId = useStore((s) => s.reconcileZulipDmMessageId);
   const unreadDms = useStore((s) => s.zulipUnreadDms);
   const removeZulipUnreadDm = useStore((s) => s.removeZulipUnreadDm);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   // "Others" (people outside any featured/secondary group) stays hidden until
@@ -149,14 +152,46 @@ export function ZulipDmView() {
     );
   }, [activeParticipants, activeKey, dmsByParticipants, setDmMessages]);
 
-  // Opening a conversation clears its unread marker.
+  // Opening a conversation clears its unread marker and any stale send error.
   useEffect(() => {
     if (activeKey != null) removeZulipUnreadDm(activeKey);
+    setSendError(null);
   }, [activeKey, removeZulipUnreadDm]);
 
   const send = (body: string) => {
-    if (!activeParticipants) return;
-    getSocket().emit("zulip:send-dm", { participantIds: activeParticipants, body });
+    if (!activeParticipants || activeKey == null) return;
+    setSendError(null);
+    // Optimistically show the message immediately under a temporary id. When the
+    // server callback returns the real Zulip message id we rewrite the temp id to
+    // it, so the later zulip:dm echo dedupes against this same entry (by id) and
+    // we never render a double.
+    const tempId = `pending:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const optimistic: ChatMessage = {
+      id: tempId,
+      body,
+      createdAt: new Date().toISOString(),
+      recipientId: null,
+      sender: {
+        id: selfId != null ? `zulip:${selfId}` : "",
+        name: me?.name ?? "You",
+        email: me?.email ?? "",
+        imageUrl: me?.imageUrl,
+      },
+    };
+    appendDmMessage(activeKey, optimistic);
+    getSocket().emit(
+      "zulip:send-dm",
+      { participantIds: activeParticipants, body },
+      (err, result) => {
+        if (err) {
+          setSendError(err);
+          return;
+        }
+        if (result?.id != null) {
+          reconcileDmMessageId(activeKey, tempId, String(result.id));
+        }
+      },
+    );
   };
 
   if (!linked) {
@@ -175,8 +210,12 @@ export function ZulipDmView() {
       others.map((id) => usersById.get(id)?.name ?? `User ${id}`).join(", ") || "Direct message";
     const messages = dmsByParticipants[activeKey] ?? [];
     return (
-      <>
-        <Stack direction="row" alignItems="center" sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
+      <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minHeight: 0 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          sx={{ p: 1, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+        >
           <IconButton size="small" onClick={() => setActiveParticipants(null)}>
             <ArrowBackIcon fontSize="small" />
           </IconButton>
@@ -185,8 +224,13 @@ export function ZulipDmView() {
           </Typography>
         </Stack>
         <MessageList messages={messages} meId={me ? `zulip:${selfId}` : ""} />
+        {sendError && (
+          <Typography variant="caption" color="error" sx={{ px: 2, py: 0.5, flexShrink: 0 }}>
+            Couldn&apos;t send: {sendError}
+          </Typography>
+        )}
         <Composer disabled={!connected} onSend={send} />
-      </>
+      </Box>
     );
   }
 
@@ -256,7 +300,7 @@ export function ZulipDmView() {
   };
 
   return (
-    <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
+    <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>
       <Box sx={{ p: 1.5 }}>
         <TextField
           fullWidth

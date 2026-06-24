@@ -85,7 +85,7 @@ export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId:
   }, [messages.length]);
 
   return (
-    <Box sx={{ flexGrow: 1, overflowY: "auto", p: 2 }}>
+    <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", p: 2 }}>
       <Stack spacing={1.2}>
         {messages.map((m) => {
           const rendered = renderBody(m.body);

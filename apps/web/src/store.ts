@@ -93,6 +93,9 @@ interface AtriumState {
   zulipDmsByParticipants: Record<string, ChatMessage[]>; // key = participantKey(ids)
   setZulipDmMessages: (key: string, msgs: ChatMessage[]) => void;
   appendZulipDmMessage: (key: string, msg: ChatMessage) => void;
+  // Rewrite an optimistic (pending) DM message's id to the real Zulip id so the
+  // later zulip:dm echo dedupes against it instead of appending a duplicate.
+  reconcileZulipDmMessageId: (key: string, fromId: string, toId: string) => void;
   zulipActiveDmParticipants: number[] | null; // full set incl. self
   setZulipActiveDmParticipants: (ids: number[] | null) => void;
   zulipUserGroups: ZulipUserGroup[];
@@ -274,6 +277,21 @@ export const useStore = create<AtriumState>((set) => ({
           ...state.zulipDmsByParticipants,
           [key]: [...prev, msg].slice(-LIMIT),
         },
+      };
+    }),
+  reconcileZulipDmMessageId: (key, fromId, toId) =>
+    set((state) => {
+      const prev = state.zulipDmsByParticipants[key];
+      if (!prev) return state;
+      const idx = prev.findIndex((m) => m.id === fromId);
+      if (idx === -1) return state;
+      // If the real-id echo already landed, just drop the optimistic placeholder;
+      // otherwise rename the placeholder to the real id so the echo dedupes.
+      const next = prev.some((m) => m.id === toId)
+        ? prev.filter((_, i) => i !== idx)
+        : prev.map((m, i) => (i === idx ? { ...m, id: toId } : m));
+      return {
+        zulipDmsByParticipants: { ...state.zulipDmsByParticipants, [key]: next },
       };
     }),
   zulipActiveDmParticipants: null,

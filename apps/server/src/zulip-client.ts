@@ -319,12 +319,16 @@ export class ZulipQueueClient extends EventEmitter {
 
   /**
    * Send a direct message to one (1:1) or more (group DM) recipients.
-   * `recipientIds` may include this user's own id; Zulip ignores self.
+   * `recipientIds` may include this user's own id. Zulip ignores self UNLESS
+   * self is the only recipient (a note-to-self), so we strip self when there are
+   * other participants and only fall back to self when it's the sole recipient.
    */
   async sendDirectMessage(recipientIds: number[], body: string): Promise<{ id: number }> {
+    const others = recipientIds.filter((id) => id !== this.selfUserId);
+    const to = others.length > 0 ? others : recipientIds;
     const params = new URLSearchParams({
       type: "direct",
-      to: JSON.stringify(recipientIds),
+      to: JSON.stringify(to),
       content: body,
     });
     const res = (await this.request("/messages", { method: "POST", body: params })) as {

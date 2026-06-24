@@ -136,12 +136,24 @@ const DEFAULT_USER_GROUP_POLICY: UserGroupPolicy = {
   secondary: [301998, 1453788],
 };
 
-/** Parse a stored JSON id-array column, treating malformed JSON as empty. */
-function parseIdColumn(raw: string | null | undefined, column: string): number[] {
-  if (!raw) return [];
+/**
+ * Resolve one policy tier from its stored column.
+ *   - null/undefined (never configured)  → fall back to the default seed.
+ *   - "[]" (admin explicitly emptied it)  → stays empty.
+ *   - "[1,2,3]"                           → those ids.
+ *   - malformed JSON                      → empty (and flagged).
+ */
+function parseIdColumn(
+  raw: string | null | undefined,
+  column: string,
+  fallback: number[],
+): number[] {
+  // Never configured: seed the default so grouping works out of the box.
+  if (raw == null) return [...fallback];
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as number[]) : [];
+    // An explicit array (including the empty array) is honored as-is.
+    return Array.isArray(parsed) ? (parsed as number[]) : [...fallback];
   } catch {
     // Don't log the raw value — it may be large/garbled. Just flag the column.
     console.warn(`getUserGroupPolicy: malformed JSON in Settings.${column}; treating as empty`);
@@ -151,13 +163,21 @@ function parseIdColumn(raw: string | null | undefined, column: string): number[]
 
 export async function getUserGroupPolicy(): Promise<UserGroupPolicy> {
   const row = await prisma.settings.findUnique({ where: { id: "singleton" } });
-  // The policy is a single unit: only seed defaults when there is no Settings
-  // row at all (policy was never set). If a row exists, a null/missing column
-  // coalesces to [] so an admin who intentionally empties a tier keeps it empty.
+  // No Settings row at all → defaults. With a row, each tier independently falls
+  // back to its default seed when its column is null/unset, but a column holding
+  // an explicit "[]" stays empty (admin intentionally emptied that tier).
   if (!row) return { ...DEFAULT_USER_GROUP_POLICY };
   return {
-    featured: parseIdColumn(row.userGroupFeatured, "userGroupFeatured"),
-    secondary: parseIdColumn(row.userGroupSecondary, "userGroupSecondary"),
+    featured: parseIdColumn(
+      row.userGroupFeatured,
+      "userGroupFeatured",
+      DEFAULT_USER_GROUP_POLICY.featured,
+    ),
+    secondary: parseIdColumn(
+      row.userGroupSecondary,
+      "userGroupSecondary",
+      DEFAULT_USER_GROUP_POLICY.secondary,
+    ),
   };
 }
 

@@ -70,6 +70,40 @@ export function App() {
           '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif',
       },
       components: {
+        MuiCssBaseline: {
+          styleOverrides: {
+            // Theme-consistent scrollbars app-wide (light + dark). Firefox uses
+            // scrollbar-color; WebKit/Blink use the ::-webkit-scrollbar pseudos.
+            "*": {
+              scrollbarWidth: "thin",
+              scrollbarColor:
+                mode === "dark"
+                  ? "rgba(255,255,255,0.22) transparent"
+                  : "rgba(0,0,0,0.26) transparent",
+            },
+            "*::-webkit-scrollbar": {
+              width: 10,
+              height: 10,
+            },
+            "*::-webkit-scrollbar-track": {
+              backgroundColor: "transparent",
+            },
+            "*::-webkit-scrollbar-thumb": {
+              borderRadius: 8,
+              border: "2px solid transparent",
+              backgroundClip: "content-box",
+              backgroundColor:
+                mode === "dark" ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.26)",
+            },
+            "*::-webkit-scrollbar-thumb:hover": {
+              backgroundColor:
+                mode === "dark" ? "rgba(255,255,255,0.34)" : "rgba(0,0,0,0.40)",
+            },
+            "*::-webkit-scrollbar-corner": {
+              backgroundColor: "transparent",
+            },
+          },
+        },
         MuiAppBar: {
           styleOverrides: {
             colorDefault: ({ theme: t }) => ({
