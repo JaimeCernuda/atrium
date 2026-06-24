@@ -210,6 +210,19 @@ export function ZulipDmView() {
     setSendError(null);
   }, [activeKey, removeZulipUnreadDm, setZulipViewState]);
 
+  const tabFocused = useStore((s) => s.zulipViewState.tabFocused);
+
+  // Ground read-state in Zulip: when a DM conversation is genuinely viewed (open
+  // AND the tab focused), tell the server to mark it read on Zulip so a
+  // re-register snapshot won't resurrect it as unread. Re-runs on focus regain.
+  useEffect(() => {
+    if (!activeParticipants || activeKey == null || !tabFocused) return;
+    getSocket().emit("zulip:mark-read", {
+      kind: "dm",
+      participantIds: activeParticipants,
+    });
+  }, [activeParticipants, activeKey, tabFocused]);
+
   const send = (body: string) => {
     if (!activeParticipants || activeKey == null) return;
     setSendError(null);

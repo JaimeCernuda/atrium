@@ -354,6 +354,46 @@ export class ZulipQueueClient extends EventEmitter {
     return { id: res.id };
   }
 
+  /**
+   * Mark every message in a channel topic as read on Zulip (op=add flag=read over
+   * the topic narrow). Grounding read-state in Zulip keeps unread_msgs in sync so
+   * a re-register's snapshot no longer resurrects a thread the user already read.
+   * Uses POST /messages/flags/narrow (narrow-scoped, server-paginated) so we don't
+   * need the message ids client-side. Best-effort: failures are swallowed since
+   * the local view-state gating remains the live source of truth.
+   */
+  async markTopicRead(channelId: number, topicName: string): Promise<void> {
+    const narrow = [
+      { operator: "stream", operand: channelId },
+      { operator: "topic", operand: topicName },
+    ];
+    await this.markNarrowRead(narrow);
+  }
+
+  /** Mark a DM conversation (1:1 or group) read on Zulip via the dm narrow. */
+  async markDmRead(otherIds: number[]): Promise<void> {
+    const ids = otherIds.filter((id) => id !== this.selfUserId);
+    const operand = ids.length > 0 ? ids : otherIds;
+    await this.markNarrowRead([{ operator: "dm", operand }]);
+  }
+
+  private async markNarrowRead(narrow: Array<{ operator: string; operand: unknown }>): Promise<void> {
+    try {
+      const params = new URLSearchParams({
+        anchor: "oldest",
+        include_anchor: "true",
+        num_before: "0",
+        num_after: "5000",
+        narrow: JSON.stringify(narrow),
+        op: "add",
+        flag: "read",
+      });
+      await this.request("/messages/flags/narrow", { method: "POST", body: params });
+    } catch {
+      // Best-effort: local gating still drives the live unread view.
+    }
+  }
+
   // ───── Direct messages + org members ─────
 
   /** All active, human org members (bots and deactivated users excluded). */

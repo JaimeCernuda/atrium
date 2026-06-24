@@ -405,4 +405,11 @@ export type ClientToServerEvents = {
   "zulip:fetch-dm-conversations": (
     cb?: (err: string | null, conversations?: ZulipDmConversation[]) => void,
   ) => void;
+  // Mark a viewed thread read on Zulip so unread_msgs stays in sync across
+  // devices and a re-register snapshot doesn't resurrect it as unread.
+  "zulip:mark-read": (
+    payload:
+      | { kind: "topic"; channelId: number; topicName: string }
+      | { kind: "dm"; participantIds: number[] },
+  ) => void;
 };

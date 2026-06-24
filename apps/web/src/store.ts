@@ -414,10 +414,24 @@ export const useStore = create<AtriumState>((set, get) => ({
     return v.drawerOpen && v.activeThread === "dm" && v.activeThreadKey === key;
   },
   seedZulipUnread: ({ topics, dms }) =>
-    set(() => ({
-      zulipUnreadTopics: Object.fromEntries(topics.map((k) => [k, true as const])),
-      zulipUnreadDms: Object.fromEntries(dms.map((k) => [k, true as const])),
-    })),
+    set((state) => {
+      // The Global-mapped channel:topic is tracked by its OWN counter
+      // (zulipUnreadGlobal), so it must be excluded from the channel unread maps —
+      // otherwise the /register snapshot would double-count it (header total) and
+      // light up the /zulip badge + folder/channel chips for Global traffic. The
+      // snapshot's PM/topic count is Zulip's source of truth, so we keep the
+      // global counter as-is and just drop the global key from `topics`.
+      const globalKey =
+        state.globalZulipChannelId != null && state.globalZulipTopicName != null
+          ? `${state.globalZulipChannelId}:${state.globalZulipTopicName}`
+          : null;
+      return {
+        zulipUnreadTopics: Object.fromEntries(
+          topics.filter((k) => k !== globalKey).map((k) => [k, true as const]),
+        ),
+        zulipUnreadDms: Object.fromEntries(dms.map((k) => [k, true as const])),
+      };
+    }),
 
   chatPanelWidth: loadDrawerWidth(),
   setChatPanelWidth: (width) => {

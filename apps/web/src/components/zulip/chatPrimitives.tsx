@@ -101,9 +101,30 @@ export function plainTextFromHtml(html: string): string {
   return (div.textContent ?? "").replace(/[ \t]+/g, " ").trim();
 }
 
+// Zulip's canonical hash-component encoder (web/src/internal_url.ts
+// `encodeHashComponent`). location.hash is URI-decoded by the browser, so Zulip
+// hides its escaping behind '.' instead of '%'. A plain encodeURIComponent would
+// leave a literal '.' in topics like "v1.2"/"node.js", which Zulip's decoder
+// mis-reads as the start of a percent-escape — corrupting the deep-link target.
+function encodeHashComponent(str: string): string {
+  return encodeURIComponent(str).replace(
+    /[%!'()*.]/g,
+    (c) =>
+      ({
+        "%": ".",
+        "!": ".21",
+        "'": ".27",
+        "(": ".28",
+        ")": ".29",
+        "*": ".2A",
+        ".": ".2E",
+      })[c]!,
+  );
+}
+
 /** Channel+topic narrow URL (Zulip's `#narrow/stream/<id>/topic/<topic>`). */
 export function channelNarrowUrl(channelId: number, topicName: string): string {
-  return `${QUOTE_REALM}/#narrow/stream/${channelId}/topic/${encodeURIComponent(topicName)}`;
+  return `${QUOTE_REALM}/#narrow/stream/${channelId}/topic/${encodeHashComponent(topicName)}`;
 }
 
 /** DM narrow URL for the OTHER participant ids (`#narrow/dm/<id1,id2,…>`). */
@@ -132,7 +153,13 @@ export function buildQuoteReply({
   originalHtml: string;
 }): string {
   const quoted = plainTextFromHtml(originalHtml);
-  return `@_**${senderName}|${senderUserId}** [said](${narrowUrl}):\n\`\`\`quote\n${quoted}\n\`\`\`\n\n`;
+  // Fence with more backticks than the longest backtick run inside the quoted
+  // body (the standard fenced-code rule Zulip itself follows). A fixed 3-backtick
+  // fence would be prematurely closed by a quoted message that contains ``` —
+  // breaking the quote block open.
+  const longestRun = (quoted.match(/`+/g) ?? []).reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  return `@_**${senderName}|${senderUserId}** [said](${narrowUrl}):\n${fence}quote\n${quoted}\n${fence}\n\n`;
 }
 
 // The imperative handle ZulipChannelView/ZulipDmView use to drop quote-reply

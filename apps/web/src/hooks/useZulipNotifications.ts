@@ -70,11 +70,31 @@ export function useZulipNotifications(): void {
       const isGlobal =
         state.globalZulipChannelId === channelId &&
         state.globalZulipTopicName === topicName;
+      // Global is its OWN unread source (zulipUnreadGlobal). It must NOT also flow
+      // into the channel unread maps, or the same message gets summed twice in the
+      // header total and lights up the /zulip badge + folder/channel chips for
+      // traffic the user is actively reading in the drawer. Handle it and return.
       if (isGlobal) {
         const v = state.zulipViewState;
         const globalActive = v.tabFocused && v.drawerOpen && v.chatView === "global";
-        if (globalActive) state.removeZulipUnreadGlobal();
-        else state.addZulipUnreadGlobal();
+        if (globalActive) {
+          state.removeZulipUnreadGlobal();
+        } else {
+          state.addZulipUnreadGlobal();
+          const tag = `zulip-global-${key}`;
+          if (passDebounce(tag)) {
+            if (state.prefs.notificationsEnabled) {
+              notify({
+                title: `${message.sender.name} in Global`,
+                body: stripHtml(message.body),
+                icon: message.sender.imageUrl,
+                tag,
+              });
+            }
+            if (state.prefs.globalChatSoundEnabled && !focused) sounds.tap();
+          }
+        }
+        return;
       }
 
       // The actively-read thread needs no nudge.

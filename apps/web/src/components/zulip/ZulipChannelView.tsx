@@ -94,6 +94,8 @@ export function ZulipChannelView({ meId }: { meId: string }) {
     );
   }, [activeChannel, activeTopic, messagesByTopic, setMessages]);
 
+  const tabFocused = useStore((s) => s.zulipViewState.tabFocused);
+
   // Opening a topic marks it the active channel thread (so live messages to it
   // count as read while it's visible+focused) and clears its existing unread.
   // Closing back to the topic/channel list clears the active thread.
@@ -106,6 +108,20 @@ export function ZulipChannelView({ meId }: { meId: string }) {
       setZulipViewState({ activeThread: null, activeThreadKey: null });
     }
   }, [activeChannel, activeTopic, removeZulipUnreadTopic, setZulipViewState]);
+
+  // Ground read-state in Zulip: when a topic is genuinely viewed (open AND the
+  // tab is focused), tell the server to mark it read on Zulip. This keeps
+  // unread_msgs in sync so a re-register snapshot won't resurrect it as unread.
+  // Re-runs on focus regain so a topic left open while the tab was blurred is
+  // marked read once the user returns to it.
+  useEffect(() => {
+    if (activeChannel == null || activeTopic == null || !tabFocused) return;
+    getSocket().emit("zulip:mark-read", {
+      kind: "topic",
+      channelId: activeChannel,
+      topicName: activeTopic,
+    });
+  }, [activeChannel, activeTopic, tabFocused]);
 
   // Group channels by Zulip channel folder. Folders keep Zulip's `order`; an
   // "Other" bucket collects channels with no folder. Empty groups are dropped so

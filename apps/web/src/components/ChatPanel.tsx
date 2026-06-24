@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { useStore } from "../store";
+import { getSocket } from "../socket";
 import { clampDrawerWidth } from "../prefs";
 import { MessageList, Composer, openZulip } from "./zulip/chatPrimitives";
 import { ZulipDmView } from "./zulip/ZulipDmView";
@@ -63,9 +64,23 @@ export function ChatPanel() {
   // Viewing the Global tab clears its unread count for the aggregate header
   // badge. Runs when the drawer opens on Global and when the tab switches in.
   const onGlobal = open && drawerTab === "global";
+  const tabFocused = useStore((s) => s.zulipViewState.tabFocused);
   useEffect(() => {
     if (onGlobal) removeZulipUnreadGlobal();
   }, [onGlobal, removeZulipUnreadGlobal]);
+
+  // Global is a Zulip channel topic under the hood, so ground its read-state in
+  // Zulip too: when the Global tab is genuinely viewed (open AND tab focused),
+  // mark its mapped topic read so unread_msgs stays in sync. Re-runs on focus.
+  useEffect(() => {
+    if (!onGlobal || !tabFocused) return;
+    if (globalZulipChannelId == null || globalZulipTopicName == null) return;
+    getSocket().emit("zulip:mark-read", {
+      kind: "topic",
+      channelId: globalZulipChannelId,
+      topicName: globalZulipTopicName,
+    });
+  }, [onGlobal, tabFocused, globalZulipChannelId, globalZulipTopicName]);
 
   // Drag the drawer's left edge to resize. We track the drag at the document
   // level so the pointer can leave the 6px handle without dropping the gesture,

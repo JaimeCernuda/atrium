@@ -276,6 +276,24 @@ export function createPresenceServer(
       }
     });
 
+    // Ground read-state in Zulip: when the user actually views a thread, mark it
+    // read on Zulip so unread_msgs stays in sync and a re-register's snapshot
+    // doesn't resurrect it as unread. Best-effort + fire-and-forget; the client
+    // already cleared its local unread optimistically.
+    socket.on("zulip:mark-read", async (payload) => {
+      const client = zulip.get(user.id);
+      if (!client) return;
+      try {
+        if (payload.kind === "topic") {
+          await client.markTopicRead(payload.channelId, payload.topicName);
+        } else {
+          await client.markDmRead(payload.participantIds);
+        }
+      } catch {
+        // Best-effort; local gating remains the live source of truth.
+      }
+    });
+
     socket.on("presence:join", async (roomId) => {
       const check = await isRoomEnterableBy(roomId, user.email);
       if (!check.ok) {
