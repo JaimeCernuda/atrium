@@ -91,8 +91,14 @@ export function ZulipChannelView({ meId }: { meId: string }) {
   const OTHER_KEY = -1;
   const groups = useMemo(() => {
     const byFolder = new Map<number, ZulipChannel[]>();
+    // Channels whose folderId is null OR points at a folder we don't know about
+    // (archived, permission-hidden, or otherwise omitted by /channel_folders)
+    // must still surface under "Other" rather than vanishing into an orphan
+    // bucket that no section renders.
+    const knownIds = new Set(folders.map((f) => f.id));
     for (const c of channels) {
-      const key = c.folderId ?? OTHER_KEY;
+      const key =
+        c.folderId != null && knownIds.has(c.folderId) ? c.folderId : OTHER_KEY;
       (byFolder.get(key) ?? byFolder.set(key, []).get(key)!).push(c);
     }
     const ordered = [...folders]
