@@ -361,6 +361,11 @@ export type ServerToClientEvents = {
   "zulip:fetch-dm-conversations": (payload: {
     conversations: ZulipDmConversation[];
   }) => void;
+  // Zulip-grounded unread state from /register's unread_msgs. Keys: channel
+  // topics `${channelId}:${topicName}`, DMs participantKey. Replaces local maps.
+  "zulip:unread-snapshot": (payload: { topics: string[]; dms: string[] }) => void;
+  // Best-effort live read-flag sync: keys that Zulip marked read elsewhere.
+  "zulip:read-flags": (payload: { topics?: string[]; dms?: string[] }) => void;
 };
 
 export type ClientToServerEvents = {

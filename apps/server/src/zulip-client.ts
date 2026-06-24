@@ -22,7 +22,15 @@ export const ZULIP_REALM = "https://grc.zulipchat.com";
 const API_BASE = `${ZULIP_REALM}/api/v1`;
 
 // Event types we register for. Keep this minimal — every type adds queue churn.
-const EVENT_TYPES = ["message", "update_message", "reaction", "presence"] as const;
+// update_message_flags carries live "read" flag changes (e.g. read on mobile) so
+// unread counts can converge across devices.
+const EVENT_TYPES = [
+  "message",
+  "update_message",
+  "reaction",
+  "presence",
+  "update_message_flags",
+] as const;
 
 function basicAuthHeader(email: string, apiKey: string): string {
   return "Basic " + Buffer.from(`${email}:${apiKey}`).toString("base64");
@@ -90,6 +98,17 @@ interface ZulipEvent {
   message_id?: number;
   emoji_name?: string;
   user_id?: number;
+  // update_message_flags fields
+  flag?: string;
+  messages?: number[];
+}
+
+// Zulip /register `unread_msgs`: the user's current unread state, the most
+// trustworthy source for seeding unread counts (survives reload + cross-device).
+interface ZulipUnreadMsgs {
+  pms?: Array<{ other_user_id?: number; sender_id?: number; unread_message_ids: number[] }>;
+  streams?: Array<{ stream_id: number; topic: string; unread_message_ids: number[] }>;
+  huddles?: Array<{ user_ids_string: string; unread_message_ids: number[] }>;
 }
 
 /**
@@ -173,6 +192,11 @@ export interface ZulipQueueClientEvents {
     title: string;
     message: ChatMessage;
   }) => void;
+  // Zulip-grounded unread state from /register's unread_msgs, normalized to the
+  // app's keys (channel topics `${channelId}:${topicName}`, DMs participantKey).
+  "unread-snapshot": (payload: { topics: string[]; dms: string[] }) => void;
+  // Best-effort live read-flag sync (update_message_flags flag:"read" op:"add").
+  "read-flags": (payload: { topics?: string[]; dms?: string[] }) => void;
 }
 
 /**
@@ -568,13 +592,51 @@ export class ZulipQueueClient extends EventEmitter {
   }
 
   private async register(): Promise<void> {
-    const body = new URLSearchParams({ event_types: JSON.stringify(EVENT_TYPES) });
+    const body = new URLSearchParams({
+      event_types: JSON.stringify(EVENT_TYPES),
+      // Also pull the current unread state so the client can seed trustworthy
+      // unread counts that survive reload + converge across devices.
+      fetch_event_types: JSON.stringify(["unread_msgs"]),
+    });
     const res = (await this.request("/register", { method: "POST", body })) as {
       queue_id: string;
       last_event_id: number;
+      unread_msgs?: ZulipUnreadMsgs;
     };
     this.queueId = res.queue_id;
     this.lastEventId = res.last_event_id;
+    if (res.unread_msgs) {
+      this.emit("unread-snapshot", this.normalizeUnread(res.unread_msgs));
+    }
+  }
+
+  /**
+   * Normalize Zulip's `unread_msgs` into the app's unread keys:
+   *  - channel topics -> `${stream_id}:${topic}` (any unread message ⇒ unread)
+   *  - 1:1 DMs        -> participantKey([self, other])
+   *  - group DMs      -> participantKey(user_ids_string members, incl. self)
+   */
+  private normalizeUnread(u: ZulipUnreadMsgs): { topics: string[]; dms: string[] } {
+    const topics: string[] = [];
+    for (const s of u.streams ?? []) {
+      if (s.unread_message_ids.length > 0) topics.push(`${s.stream_id}:${s.topic}`);
+    }
+    const dms = new Set<string>();
+    for (const pm of u.pms ?? []) {
+      if (pm.unread_message_ids.length === 0) continue;
+      const other = pm.other_user_id ?? pm.sender_id;
+      if (other == null) continue;
+      dms.add(participantKey([this.selfUserId, other]));
+    }
+    for (const h of u.huddles ?? []) {
+      if (h.unread_message_ids.length === 0) continue;
+      const ids = h.user_ids_string
+        .split(",")
+        .map((x) => Number(x))
+        .filter((n) => !Number.isNaN(n));
+      dms.add(participantKey([this.selfUserId, ...ids]));
+    }
+    return { topics, dms: [...dms] };
   }
 
   private async pollLoop(): Promise<void> {
@@ -642,6 +704,18 @@ export class ZulipQueueClient extends EventEmitter {
         title: dmTitle(m, this.selfUserId),
         message: toChatMessage(m),
       });
+    } else if (
+      ev.type === "update_message_flags" &&
+      ev.flag === "read" &&
+      ev.op === "add"
+    ) {
+      // A "read" flag was added (possibly on another device). Resolving the
+      // affected message ids back to topic/dm keys would need a per-id lookup we
+      // don't keep, so this is best-effort: the next register's unread_msgs
+      // snapshot is authoritative, and the local view-state gating (client side)
+      // remains the live source of truth. Emitting an empty read-flags keeps the
+      // event wired for future per-narrow resolution without misclassifying it.
+      this.emit("read-flags", {});
     } else if (ev.type === "reaction" && typeof ev.message_id === "number") {
       // Reaction events don't carry the stream/topic; the client resolves them
       // by message id within already-loaded topics. We forward channelId/topic

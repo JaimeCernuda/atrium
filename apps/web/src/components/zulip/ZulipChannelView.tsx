@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Box,
   Chip,
@@ -14,10 +14,17 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import type { ZulipChannel } from "@atrium/shared";
-import { useStore } from "../../store";
+import { unreadByChannel, unreadByFolder, useStore } from "../../store";
 import { getSocket } from "../../socket";
 import { UnlinkedZulipFallback } from "../UnlinkedZulipFallback";
-import { MessageList, Composer, openZulip } from "./chatPrimitives";
+import {
+  MessageList,
+  Composer,
+  openZulip,
+  buildQuoteReply,
+  channelNarrowUrl,
+  type ComposerHandle,
+} from "./chatPrimitives";
 
 /**
  * Topic-first Zulip channel browser: a channel list that drills into its topics
@@ -41,6 +48,17 @@ export function ZulipChannelView({ meId }: { meId: string }) {
   const setMessages = useStore((s) => s.setZulipMessages);
   const unreadTopics = useStore((s) => s.zulipUnreadTopics);
   const removeZulipUnreadTopic = useStore((s) => s.removeZulipUnreadTopic);
+  const setZulipViewState = useStore((s) => s.setZulipViewState);
+
+  const composerRef = useRef<ComposerHandle>(null);
+
+  // Hierarchical unread counts (folder -> channel -> topic), derived from the
+  // single boolean unread map so they can never drift.
+  const byChannel = useMemo(() => unreadByChannel(unreadTopics), [unreadTopics]);
+  const byFolder = useMemo(
+    () => unreadByFolder(unreadTopics, channels, folders),
+    [unreadTopics, channels, folders],
+  );
 
   // If we arrive with an active channel (e.g. a room's "Open in Zulip" button)
   // but the channel list hasn't loaded yet, request it so the active channel's
@@ -76,12 +94,18 @@ export function ZulipChannelView({ meId }: { meId: string }) {
     );
   }, [activeChannel, activeTopic, messagesByTopic, setMessages]);
 
-  // Opening a topic clears its unread marker.
+  // Opening a topic marks it the active channel thread (so live messages to it
+  // count as read while it's visible+focused) and clears its existing unread.
+  // Closing back to the topic/channel list clears the active thread.
   useEffect(() => {
     if (activeChannel != null && activeTopic != null) {
-      removeZulipUnreadTopic(`${activeChannel}:${activeTopic}`);
+      const key = `${activeChannel}:${activeTopic}`;
+      setZulipViewState({ activeThread: "channel", activeThreadKey: key });
+      removeZulipUnreadTopic(key);
+    } else {
+      setZulipViewState({ activeThread: null, activeThreadKey: null });
     }
-  }, [activeChannel, activeTopic, removeZulipUnreadTopic]);
+  }, [activeChannel, activeTopic, removeZulipUnreadTopic, setZulipViewState]);
 
   // Group channels by Zulip channel folder. Folders keep Zulip's `order`; an
   // "Other" bucket collects channels with no folder. Empty groups are dropped so
@@ -138,6 +162,22 @@ export function ZulipChannelView({ meId }: { meId: string }) {
     getSocket().emit("zulip:send", { channelId: activeChannel, topicName: activeTopic, body });
   };
 
+  // Quote-reply: drop Zulip quote-and-reply markup into the composer, focused.
+  const onReply = (target: {
+    senderName: string;
+    senderUserId: number;
+    bodyHtml: string;
+  }) => {
+    if (activeChannel == null || activeTopic == null) return;
+    const markup = buildQuoteReply({
+      senderName: target.senderName,
+      senderUserId: target.senderUserId,
+      narrowUrl: channelNarrowUrl(activeChannel, activeTopic),
+      originalHtml: target.bodyHtml,
+    });
+    composerRef.current?.insertAtCaret(markup);
+  };
+
   const activeKey =
     activeChannel != null && activeTopic != null ? `${activeChannel}:${activeTopic}` : null;
   const messages = activeKey ? messagesByTopic[activeKey] ?? [] : [];
@@ -170,8 +210,8 @@ export function ZulipChannelView({ meId }: { meId: string }) {
             sx={{ ml: 1, maxWidth: "50%", flexShrink: 1 }}
           />
         </Stack>
-        <MessageList messages={messages} meId={meId} />
-        <Composer disabled={!connected} onSend={send} />
+        <MessageList messages={messages} meId={meId} onReply={onReply} />
+        <Composer ref={composerRef} disabled={!connected} onSend={send} />
       </Box>
     );
   }
@@ -218,13 +258,20 @@ export function ZulipChannelView({ meId }: { meId: string }) {
                       setActiveTopic(t.name);
                     }}
                   >
-                    <TagIcon fontSize="small" sx={{ mr: 1, color: "text.disabled" }} />
-                    <Typography variant="body2" sx={{ flex: 1, fontWeight: unread ? 700 : 400 }}>
+                    <TagIcon fontSize="small" sx={{ mr: 1, color: "text.disabled", flexShrink: 0 }} />
+                    <Typography variant="body2" noWrap sx={{ fontWeight: unread ? 700 : 400, minWidth: 0 }}>
                       {t.name}
                     </Typography>
                     {unread && (
                       <Box
-                        sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "secondary.main", ml: 1 }}
+                        sx={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          bgcolor: "secondary.main",
+                          ml: 0.75,
+                          flexShrink: 0,
+                        }}
                       />
                     )}
                   </ListItemButton>
@@ -277,30 +324,58 @@ export function ZulipChannelView({ meId }: { meId: string }) {
                 )}
                 <Typography
                   variant="overline"
-                  sx={{ color: "text.secondary", lineHeight: 1.6, flex: 1 }}
+                  sx={{ color: "text.secondary", lineHeight: 1.6, minWidth: 0 }}
                   noWrap
                 >
                   {group.name}
                 </Typography>
+                {byFolder[group.id] ? (
+                  <Chip
+                    label={byFolder[group.id]}
+                    size="small"
+                    color="secondary"
+                    sx={{ ml: 0.75, height: 18, fontSize: "0.65rem" }}
+                  />
+                ) : null}
+                <Box sx={{ flex: 1 }} />
                 <Chip label={group.channels.length} size="small" sx={{ height: 18, fontSize: "0.65rem" }} />
               </ListItemButton>
               <Collapse in={!isCollapsed} timeout="auto" unmountOnExit>
                 <List dense disablePadding>
-                  {group.channels.map((c) => (
-                    <ListItemButton
-                      key={c.id}
-                      onClick={() => setActiveChannel(c.id, null)}
-                      sx={{ pl: 3 }}
-                    >
-                      <TagIcon
-                        fontSize="small"
-                        sx={{ mr: 1, color: c.subscribed ? "primary.main" : "text.disabled" }}
-                      />
-                      <Typography variant="body2" sx={{ fontWeight: c.subscribed ? 600 : 400 }}>
-                        {c.name}
-                      </Typography>
-                    </ListItemButton>
-                  ))}
+                  {group.channels.map((c) => {
+                    const channelUnread = byChannel[c.id] ?? 0;
+                    return (
+                      <ListItemButton
+                        key={c.id}
+                        onClick={() => setActiveChannel(c.id, null)}
+                        sx={{ pl: 3 }}
+                      >
+                        <TagIcon
+                          fontSize="small"
+                          sx={{
+                            mr: 1,
+                            flexShrink: 0,
+                            color: c.subscribed ? "primary.main" : "text.disabled",
+                          }}
+                        />
+                        <Typography
+                          variant="body2"
+                          noWrap
+                          sx={{ fontWeight: channelUnread > 0 ? 700 : c.subscribed ? 600 : 400, minWidth: 0 }}
+                        >
+                          {c.name}
+                        </Typography>
+                        {channelUnread > 0 && (
+                          <Chip
+                            label={channelUnread}
+                            size="small"
+                            color="secondary"
+                            sx={{ ml: 0.75, height: 18, fontSize: "0.65rem", flexShrink: 0 }}
+                          />
+                        )}
+                      </ListItemButton>
+                    );
+                  })}
                 </List>
               </Collapse>
             </Box>

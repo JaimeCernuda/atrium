@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import {
   AppBar,
   Badge,
@@ -15,13 +15,14 @@ import {
 import ChatIcon from "@mui/icons-material/Chat";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import type { PermissionKey } from "@atrium/shared";
-import { can, useStore } from "../store";
+import { can, unreadChannelTotal, useStore } from "../store";
 import { SettingsMenu } from "./SettingsMenu";
 import { UserMenu } from "./UserMenu";
 import { ChatPanel } from "./ChatPanel";
 import { PingSnackbar } from "./PingSnackbar";
 import { AdminMenu } from "./AdminMenu";
 import { useZulipNotifications } from "../hooks/useZulipNotifications";
+import { useZulipNotificationPermission } from "../hooks/useZulipNotificationPermission";
 
 const TABS: Array<{ label: string; path: string; permission?: PermissionKey }> = [
   { label: "Office", path: "/" },
@@ -48,20 +49,59 @@ export function AppShell({ children }: Props) {
   const chatOpen = useStore((s) => s.chatOpen);
   const setChatOpen = useStore((s) => s.setChatOpen);
   const chatPanelWidth = useStore((s) => s.chatPanelWidth);
-  // Aggregate header badge: unread DM conversations + unread Global messages.
+  // Aggregate header badge: unread channel topics + unread DM conversations +
+  // unread Global messages. The channel total was previously missing, which is
+  // why the bubble showed no number when only channels were unread.
   const unreadDmCount = useStore((s) => Object.keys(s.zulipUnreadDms).length);
   const unreadGlobal = useStore((s) => s.zulipUnreadGlobal);
-  const totalUnread = unreadDmCount + unreadGlobal;
+  const unreadTopics = useStore((s) => s.zulipUnreadTopics);
+  const channelTotal = unreadChannelTotal(unreadTopics);
+  const totalUnread = channelTotal + unreadDmCount + unreadGlobal;
+  const setZulipViewState = useStore((s) => s.setZulipViewState);
 
   // Browser notifications + sound + unread for live Zulip traffic, on every
   // authed page (this shell wraps them all; Login is outside it).
   useZulipNotifications();
+  useZulipNotificationPermission();
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = matchTab(location.pathname);
+
+  // Track tab focus so unread gating only treats a thread as read when the tab
+  // is actually visible.
+  useEffect(() => {
+    const onVisibility = () =>
+      setZulipViewState({ tabFocused: document.visibilityState === "visible" });
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    window.addEventListener("blur", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+      window.removeEventListener("blur", onVisibility);
+    };
+  }, [setZulipViewState]);
+
+  // Whether the full /zulip page is the active surface. Leaving it drops any
+  // active channel thread so a backgrounded channel re-counts unread.
+  useEffect(() => {
+    const onZulipPage = activeTab === "/zulip";
+    if (onZulipPage) {
+      setZulipViewState({ zulipPageActive: true });
+    } else {
+      const v = useStore.getState().zulipViewState;
+      setZulipViewState({
+        zulipPageActive: false,
+        ...(v.activeThread === "channel"
+          ? { activeThread: null, activeThreadKey: null }
+          : {}),
+      });
+    }
+  }, [activeTab, setZulipViewState]);
 
   return (
     <Box
@@ -119,7 +159,20 @@ export function AppShell({ children }: Props) {
               <Tab
                 key={t.path}
                 value={t.path}
-                label={t.label}
+                label={
+                  t.path === "/zulip" ? (
+                    <Badge
+                      color="secondary"
+                      badgeContent={channelTotal}
+                      invisible={channelTotal === 0}
+                      sx={{ "& .MuiBadge-badge": { right: -12, top: 2 } }}
+                    >
+                      {t.label}
+                    </Badge>
+                  ) : (
+                    t.label
+                  )
+                }
                 component={RouterLink}
                 to={t.path}
                 sx={{ minHeight: 40, py: 0.5 }}

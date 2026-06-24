@@ -22,6 +22,7 @@ import { registerSubmissions } from "./submissions.js";
 import { registerRoles, seedRolesIfEmpty } from "./roles.js";
 import { registerMembers } from "./members.js";
 import { registerZulipLink } from "./zulip-link.js";
+import { processLevelZulipCache } from "./zulip-process-cache.js";
 
 const config = loadConfig();
 
@@ -104,6 +105,16 @@ await app.listen({ port: config.port, host: "0.0.0.0" });
 const { io, broadcaster, zulip } = createPresenceServer(app.server, config);
 broadcasterRef.current = broadcaster;
 zulipRef.current = zulip;
+// Stop the process-level Zulip cache sweep on shutdown so the interval doesn't
+// keep the event loop ticking during a graceful exit.
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.once(sig, () => {
+    processLevelZulipCache.stopEvictionLoop();
+    io.close();
+    app.close().finally(() => process.exit(0));
+  });
+}
+
 io.use((socket, next) => {
   const rawCookie = socket.request.headers.cookie ?? "";
   const match = new RegExp(`(?:^|;\\s*)${config.session.cookieName}=([^;]+)`).exec(rawCookie);

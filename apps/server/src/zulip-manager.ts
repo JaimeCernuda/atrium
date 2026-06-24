@@ -3,7 +3,8 @@ import type { Config } from "./config.js";
 import { getZulipKey } from "./db.js";
 import { decryptZulipKey } from "./zulip-crypto.js";
 import { ZulipQueueClient } from "./zulip-client.js";
-import { ZulipDataCache, type ChannelsData } from "./zulip-cache.js";
+import type { ZulipDataCache, ChannelsData } from "./zulip-cache.js";
+import { processLevelZulipCache } from "./zulip-process-cache.js";
 
 interface ManagedEntry {
   client: ZulipQueueClient;
@@ -47,6 +48,11 @@ export interface ZulipFanout {
   // Refreshed channels+folders pushed out-of-band (cache background refresh or
   // admin reload) so the user's sockets can re-render without a client request.
   onChannels: (userId: string, payload: ChannelsData) => void;
+  // Zulip-grounded unread snapshot (from /register unread_msgs) the client uses
+  // to seed unread counts that survive reload + converge across devices.
+  onUnreadSnapshot: (userId: string, payload: { topics: string[]; dms: string[] }) => void;
+  // Best-effort live read-flag sync.
+  onReadFlags: (userId: string, payload: { topics?: string[]; dms?: string[] }) => void;
 }
 
 /**
@@ -148,11 +154,21 @@ export class ZulipManager {
     client.on("message", (payload) => this.fanout.onMessage(userId, payload));
     client.on("reaction", (payload) => this.fanout.onReaction(userId, payload));
     client.on("dm", (payload) => this.fanout.onDm(userId, payload));
+    client.on("unread-snapshot", (payload) => this.fanout.onUnreadSnapshot(userId, payload));
+    client.on("read-flags", (payload) => this.fanout.onReadFlags(userId, payload));
 
-    const cache = new ZulipDataCache(
+    // Process-level cache survives release()/last-socket-disconnect. getOrCreate
+    // returns a surviving instance (rebound to this fresh client) when one exists
+    // within the TTL — so a reconnect serves cached channels/topics instantly —
+    // or creates a new one. The onChannels closure also bumps recency.
+    const cache = processLevelZulipCache.getOrCreate(
+      userId,
       () => client.fetchChannels(),
       (channelId) => client.fetchTopics(channelId),
-      (data) => this.fanout.onChannels(userId, data),
+      (data) => {
+        this.fanout.onChannels(userId, data);
+        processLevelZulipCache.markUsed(userId);
+      },
     );
 
     const entry: ManagedEntry = { client, cache, refCount };
@@ -186,7 +202,10 @@ export class ZulipManager {
   async forceReload(userId: string): Promise<ChannelsData | null> {
     const entry = this.entries.get(userId);
     if (!entry) return null;
+    // forceReload mutates the surviving process-cache instance in place (clears
+    // + refetches now). Bump recency so the freshly-reloaded data isn't swept.
     const data = await entry.cache.forceReload();
+    processLevelZulipCache.markUsed(userId);
     this.fanout.onChannels(userId, data);
     return data;
   }
@@ -214,6 +233,9 @@ export class ZulipManager {
     if (entry.refCount <= 0) {
       entry.client.stop();
       this.entries.delete(userId);
+      // NOTE: the user's ZulipDataCache is intentionally NOT evicted here — it
+      // lives in processLevelZulipCache and must survive the disconnect so a
+      // reconnect within the TTL serves cached channels/topics instantly.
     }
   }
 }

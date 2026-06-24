@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Avatar,
   Box,
@@ -32,7 +32,14 @@ import { participantKey } from "@atrium/shared";
 import { useStore } from "../../store";
 import { getSocket } from "../../socket";
 import { UnlinkedZulipFallback } from "../UnlinkedZulipFallback";
-import { MessageList, Composer, openZulip } from "./chatPrimitives";
+import {
+  MessageList,
+  Composer,
+  openZulip,
+  buildQuoteReply,
+  dmNarrowUrl,
+  type ComposerHandle,
+} from "./chatPrimitives";
 
 type DmTier = "featured" | "secondary" | "others";
 
@@ -158,8 +165,10 @@ export function ZulipDmView() {
   const reconcileDmMessageId = useStore((s) => s.reconcileZulipDmMessageId);
   const unreadDms = useStore((s) => s.zulipUnreadDms);
   const removeZulipUnreadDm = useStore((s) => s.removeZulipUnreadDm);
+  const setZulipViewState = useStore((s) => s.setZulipViewState);
   const conversations = useStore((s) => s.zulipDmConversations);
   const setConversations = useStore((s) => s.setZulipDmConversations);
+  const composerRef = useRef<ComposerHandle>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
@@ -188,11 +197,18 @@ export function ZulipDmView() {
     );
   }, [activeParticipants, activeKey, dmsByParticipants, setDmMessages]);
 
-  // Opening a conversation clears its unread marker and any stale send error.
+  // Opening a conversation marks it the active DM thread (so live messages to it
+  // count as read while the drawer's open + tab focused) and clears its unread.
+  // Closing back to the list clears the active thread.
   useEffect(() => {
-    if (activeKey != null) removeZulipUnreadDm(activeKey);
+    if (activeKey != null) {
+      setZulipViewState({ activeThread: "dm", activeThreadKey: activeKey });
+      removeZulipUnreadDm(activeKey);
+    } else {
+      setZulipViewState({ activeThread: null, activeThreadKey: null });
+    }
     setSendError(null);
-  }, [activeKey, removeZulipUnreadDm]);
+  }, [activeKey, removeZulipUnreadDm, setZulipViewState]);
 
   const send = (body: string) => {
     if (!activeParticipants || activeKey == null) return;
@@ -230,6 +246,23 @@ export function ZulipDmView() {
     );
   };
 
+  // Quote-reply in a DM: build the DM narrow + quote markup and insert it.
+  const onReply = (target: {
+    senderName: string;
+    senderUserId: number;
+    bodyHtml: string;
+  }) => {
+    if (!activeParticipants) return;
+    const others = activeParticipants.filter((id) => id !== selfId);
+    const markup = buildQuoteReply({
+      senderName: target.senderName,
+      senderUserId: target.senderUserId,
+      narrowUrl: dmNarrowUrl(others),
+      originalHtml: target.bodyHtml,
+    });
+    composerRef.current?.insertAtCaret(markup);
+  };
+
   if (!linked) {
     return (
       <UnlinkedZulipFallback
@@ -259,13 +292,13 @@ export function ZulipDmView() {
             {title}
           </Typography>
         </Stack>
-        <MessageList messages={messages} meId={me ? `zulip:${selfId}` : ""} />
+        <MessageList messages={messages} meId={me ? `zulip:${selfId}` : ""} onReply={onReply} />
         {sendError && (
           <Typography variant="caption" color="error" sx={{ px: 2, py: 0.5, flexShrink: 0 }}>
             Couldn&apos;t send: {sendError}
           </Typography>
         )}
-        <Composer disabled={!connected} onSend={send} />
+        <Composer ref={composerRef} disabled={!connected} onSend={send} />
       </Box>
     );
   }

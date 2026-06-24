@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Avatar,
   Box,
@@ -21,6 +28,7 @@ import FormatBoldIcon from "@mui/icons-material/FormatBold";
 import FormatItalicIcon from "@mui/icons-material/FormatItalic";
 import CodeIcon from "@mui/icons-material/Code";
 import DataObjectIcon from "@mui/icons-material/DataObject";
+import ReplyIcon from "@mui/icons-material/Reply";
 import DOMPurify from "dompurify";
 import { getSocket } from "../../socket";
 import type { ChatMessage, ZulipChannel, ZulipUser, ZulipUserGroup } from "@atrium/shared";
@@ -80,6 +88,69 @@ function renderBody(body: string): { html: string } | null {
   return { html: rewriteUploadUrls(DOMPurify.sanitize(body, SANITIZE_CONFIG)) };
 }
 
+// ───── Quote-and-reply helpers ─────
+// The Zulip realm narrow base. Narrow URLs deep-link the quoted message.
+const QUOTE_REALM = "https://grc.zulipchat.com";
+
+/** Plain-text of a (possibly HTML) message body, whitespace-collapsed. */
+export function plainTextFromHtml(html: string): string {
+  if (html.indexOf("<") === -1) return html.replace(/\s+/g, " ").trim();
+  if (typeof document === "undefined") return html;
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return (div.textContent ?? "").replace(/[ \t]+/g, " ").trim();
+}
+
+/** Channel+topic narrow URL (Zulip's `#narrow/stream/<id>/topic/<topic>`). */
+export function channelNarrowUrl(channelId: number, topicName: string): string {
+  return `${QUOTE_REALM}/#narrow/stream/${channelId}/topic/${encodeURIComponent(topicName)}`;
+}
+
+/** DM narrow URL for the OTHER participant ids (`#narrow/dm/<id1,id2,…>`). */
+export function dmNarrowUrl(otherIds: number[]): string {
+  return `${QUOTE_REALM}/#narrow/dm/${otherIds.join(",")}`;
+}
+
+/**
+ * Zulip's verified quote-and-reply markup:
+ *   @_**Name|ID** [said](narrow):
+ *   ```quote
+ *   <original message as plain text>
+ *   ```
+ * `@_` is the silent-mention form (links the sender without pinging them). The
+ * caller inserts this into the composer; the user types their reply below it.
+ */
+export function buildQuoteReply({
+  senderName,
+  senderUserId,
+  narrowUrl,
+  originalHtml,
+}: {
+  senderName: string;
+  senderUserId: number;
+  narrowUrl: string;
+  originalHtml: string;
+}): string {
+  const quoted = plainTextFromHtml(originalHtml);
+  return `@_**${senderName}|${senderUserId}** [said](${narrowUrl}):\n\`\`\`quote\n${quoted}\n\`\`\`\n\n`;
+}
+
+// The imperative handle ZulipChannelView/ZulipDmView use to drop quote-reply
+// markup into the composer and focus it.
+export interface ComposerHandle {
+  insertAtCaret: (text: string) => void;
+  focus: () => void;
+}
+
+// What a Reply click hands back to the owning view so it can build the right
+// narrow URL (channel vs DM) and the quote markup.
+export interface ReplyTarget {
+  messageId: string;
+  senderName: string;
+  senderUserId: number;
+  bodyHtml: string;
+}
+
 // A run of consecutive messages from one sender, within MERGE_WINDOW_MS. The
 // avatar + name + time render once per run; the bodies stack tightly beneath.
 interface MessageRun {
@@ -131,7 +202,15 @@ function formatRunTime(iso: string): string {
  * the full-page Zulip client. Kept presentation-only: callers own data + send.
  * Consecutive same-sender messages merge into one avatar+name block.
  */
-export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId: string }) {
+export function MessageList({
+  messages,
+  meId,
+  onReply,
+}: {
+  messages: ChatMessage[];
+  meId: string;
+  onReply?: (target: ReplyTarget) => void;
+}) {
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
@@ -173,18 +252,54 @@ export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId:
               </Stack>
               {run.messages.map((m) => {
                 const rendered = renderBody(m.body);
+                // Zulip sender id arrives as "zulip:NN"; pull the numeric id for
+                // the quote-reply silent-mention markup.
+                const senderUserId = Number(m.sender.id.split(":")[1]);
                 return (
                   <Box
                     key={m.id}
                     sx={{
+                      position: "relative",
                       bgcolor: run.isOwn ? "primary.main" : "action.hover",
                       color: run.isOwn ? "primary.contrastText" : "text.primary",
                       px: 1.5,
                       py: 0.75,
                       borderRadius: 2,
                       wordBreak: "break-word",
+                      "&:hover .reply-btn": { opacity: 1 },
                     }}
                   >
+                    {onReply && Number.isFinite(senderUserId) && (
+                      <Tooltip title="Reply with quote">
+                        <IconButton
+                          className="reply-btn"
+                          size="small"
+                          onClick={() =>
+                            onReply({
+                              messageId: m.id,
+                              senderName: m.sender.name,
+                              senderUserId,
+                              bodyHtml: m.body,
+                            })
+                          }
+                          sx={{
+                            position: "absolute",
+                            top: -10,
+                            [run.isOwn ? "left" : "right"]: -10,
+                            opacity: 0,
+                            transition: "opacity 0.12s",
+                            bgcolor: "background.paper",
+                            border: 1,
+                            borderColor: "divider",
+                            boxShadow: 1,
+                            "&:hover": { bgcolor: "background.paper" },
+                          }}
+                          aria-label="Reply with quote"
+                        >
+                          <ReplyIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                     {rendered ? (
                       <Box
                         component="div"
@@ -212,13 +327,26 @@ export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId:
                             my: 0.5,
                           },
                           "& pre code": { bgcolor: "transparent", p: 0 },
+                          // Zulip quote-reply blocks: a blockquote preceded by an
+                          // "@_**Name** said:" attribution. Render as a distinct
+                          // indented, tinted block so quoted context reads apart
+                          // from the reply.
                           "& blockquote": {
-                            borderLeft: 3,
-                            borderColor: "divider",
-                            pl: 1,
-                            my: 0.5,
-                            opacity: 0.85,
+                            borderLeft: "4px solid",
+                            borderColor: run.isOwn ? "rgba(255,255,255,0.5)" : "primary.main",
+                            bgcolor: run.isOwn ? "rgba(255,255,255,0.12)" : "action.hover",
+                            borderRadius: "0 4px 4px 0",
+                            pl: 1.5,
+                            pr: 1,
+                            py: 0.75,
+                            my: 0.75,
+                            ml: 0,
+                            "& p:first-of-type": { mt: 0 },
+                            "& p:last-of-type": { mb: 0 },
+                            "& strong": { fontWeight: 700 },
                           },
+                          // Nested quotes recede further.
+                          "& blockquote blockquote": { opacity: 0.85 },
                           "& .user-mention": {
                             bgcolor: run.isOwn ? "rgba(255,255,255,0.2)" : "action.selected",
                             px: 0.5,
@@ -295,13 +423,10 @@ function detectMention(value: string, caret: number): MentionState | null {
   return { trigger: first, at: start, query };
 }
 
-export function Composer({
-  disabled,
-  onSend,
-}: {
-  disabled?: boolean;
-  onSend: (body: string) => void;
-}) {
+export const Composer = forwardRef<
+  ComposerHandle,
+  { disabled?: boolean; onSend: (body: string) => void }
+>(function Composer({ disabled, onSend }, ref) {
   const zulipUsers = useStore((s) => s.zulipUsers);
   const zulipUserGroups = useStore((s) => s.zulipUserGroups);
   const zulipChannels = useStore((s) => s.zulipChannels);
@@ -398,6 +523,17 @@ export function Composer({
       }
     });
   };
+
+  // Expose insert/focus so a Reply action can drop quote-and-reply markup at the
+  // caret and bring the composer into focus.
+  useImperativeHandle(
+    ref,
+    () => ({
+      insertAtCaret: (text: string) => insertAtCaret(text),
+      focus: () => inputRef.current?.focus(),
+    }),
+    [],
+  );
 
   const applyMention = (item: MentionItem) => {
     if (!mention) return;
@@ -703,7 +839,7 @@ export function Composer({
       </Popper>
     </Box>
   );
-}
+});
 
 export const openZulip = () =>
   window.open("https://grc.zulipchat.com", "_blank", "noopener");

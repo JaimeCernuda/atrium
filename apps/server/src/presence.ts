@@ -18,6 +18,7 @@ import {
 import { findRoomOwnedBy, isRoomEnterableBy } from "./rooms.js";
 import type { Config } from "./config.js";
 import { ZulipManager, type ZulipFanout } from "./zulip-manager.js";
+import { processLevelZulipCache } from "./zulip-process-cache.js";
 
 type PresenceIO = IOServer<ClientToServerEvents, ServerToClientEvents, object, { user: User }>;
 
@@ -72,8 +73,17 @@ export function createPresenceServer(
     onChannels: (userId, payload) => {
       for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:channels", payload);
     },
+    onUnreadSnapshot: (userId, payload) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:unread-snapshot", payload);
+    },
+    onReadFlags: (userId, payload) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:read-flags", payload);
+    },
   };
   const zulip = new ZulipManager(config, zulipFanout);
+  // Sweep idle process-level Zulip caches periodically (they intentionally
+  // survive socket disconnects; this caps unbounded growth).
+  processLevelZulipCache.startEvictionLoop();
 
   function snapshot(): Record<string, PresenceUser[]> {
     const by: Record<string, PresenceUser[]> = {};

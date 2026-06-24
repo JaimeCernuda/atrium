@@ -29,15 +29,40 @@ export function ChatPanel() {
   const width = useStore((s) => s.chatPanelWidth);
   const setChatPanelWidth = useStore((s) => s.setChatPanelWidth);
   const unreadDms = useStore((s) => s.zulipUnreadDms);
+  const unreadGlobal = useStore((s) => s.zulipUnreadGlobal);
   const removeZulipUnreadGlobal = useStore((s) => s.removeZulipUnreadGlobal);
+  const setZulipViewState = useStore((s) => s.setZulipViewState);
 
   const dmUnreadCount = Object.keys(unreadDms).length;
 
   const onClose = () => setChatOpen(false);
 
+  // The drawer hosts only the Global and DMs tabs.
+  const drawerTab: "global" | "dm" = tab === "dm" || tab === "zulip-dm" ? "dm" : "global";
+
+  // Mirror drawer open/closed into the composite view-state so unread gating
+  // (Global + DMs live here) knows the surface is actually visible.
+  useEffect(() => {
+    setZulipViewState({ drawerOpen: open });
+  }, [open, setZulipViewState]);
+
+  // Mirror which drawer tab is showing. Switching to the DM list (no open
+  // conversation) clears any active dm thread; ZulipDmView sets it on open.
+  useEffect(() => {
+    if (!open) {
+      setZulipViewState({ chatView: null });
+      return;
+    }
+    if (drawerTab === "global") {
+      setZulipViewState({ chatView: "global", activeThread: null, activeThreadKey: null });
+    } else {
+      setZulipViewState({ chatView: "dm" });
+    }
+  }, [open, drawerTab, setZulipViewState]);
+
   // Viewing the Global tab clears its unread count for the aggregate header
   // badge. Runs when the drawer opens on Global and when the tab switches in.
-  const onGlobal = open && (tab === "dm" || tab === "zulip-dm" ? false : true);
+  const onGlobal = open && drawerTab === "global";
   useEffect(() => {
     if (onGlobal) removeZulipUnreadGlobal();
   }, [onGlobal, removeZulipUnreadGlobal]);
@@ -75,11 +100,6 @@ export function ChatPanel() {
       document.removeEventListener("mouseup", onUp);
     };
   }, [setChatPanelWidth]);
-
-  // The drawer hosts only the Global and DMs tabs; the full Zulip surface lives
-  // on the /zulip route. Coerce any stale zulip view back to a tab the drawer
-  // can render.
-  const drawerTab: "global" | "dm" = tab === "dm" || tab === "zulip-dm" ? "dm" : "global";
 
   // Both tabs are Zulip-only now. Global is Zulip-backed only when linked AND an
   // admin has mapped it to a channel+topic; otherwise we explain rather than
@@ -150,7 +170,19 @@ export function ChatPanel() {
           </IconButton>
         </Stack>
         <Tabs value={drawerTab} onChange={(_, v) => setTab(v)} variant="fullWidth">
-          <Tab value="global" label="Global" />
+          <Tab
+            value="global"
+            label={
+              <Badge
+                color="secondary"
+                badgeContent={unreadGlobal}
+                invisible={unreadGlobal === 0}
+                sx={{ "& .MuiBadge-badge": { right: -14, top: 2 } }}
+              >
+                Global
+              </Badge>
+            }
+          />
           <Tab
             value="dm"
             label={

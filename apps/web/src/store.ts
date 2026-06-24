@@ -22,6 +22,15 @@ import {
   type UserPrefs,
 } from "./prefs";
 
+export interface ZulipViewState {
+  drawerOpen: boolean; // the right chat drawer is open
+  zulipPageActive: boolean; // the user is on the full /zulip route
+  chatView: "global" | "dm" | null; // which drawer tab is showing
+  activeThread: "channel" | "dm" | null; // kind of the open thread
+  activeThreadKey: string | null; // `${channelId}:${topic}` or participantKey
+  tabFocused: boolean; // browser tab is visible/focused
+}
+
 interface AtriumState {
   brand: { name: string; shortName?: string; logoUrl?: string; accentColor: string };
   setBrand: (b: AtriumState["brand"]) => void;
@@ -134,6 +143,21 @@ interface AtriumState {
   addZulipUnreadGlobal: () => void;
   removeZulipUnreadGlobal: () => void;
 
+  // ── Composite "what is the reader actually looking at" state ──
+  // Powers reliable read/unread gating + notification suppression. A thread
+  // counts as READ only when it is the visible/active thread on an open surface
+  // AND the browser tab is focused. `drawerOpen` covers Global + DMs (they live
+  // in the right drawer); `zulipPageActive` covers channel topics (they live on
+  // the full /zulip page). See isThreadActiveAndRead.
+  zulipViewState: ZulipViewState;
+  setZulipViewState: (updates: Partial<ZulipViewState>) => void;
+  // True only when `key` is the actively-read thread of its surface and the tab
+  // is focused. type "channel" gates on the /zulip page; "dm" on the drawer.
+  isThreadActiveAndRead: (key: string, type: "channel" | "dm") => boolean;
+  // Replace the local unread maps from a Zulip /register unread_msgs snapshot so
+  // counts survive reload + stay correct across devices.
+  seedZulipUnread: (snapshot: { topics: string[]; dms: string[] }) => void;
+
   // ── Resizable chat drawer width (px, persisted) ──
   chatPanelWidth: number;
   setChatPanelWidth: (width: number) => void;
@@ -149,7 +173,7 @@ interface AtriumState {
 
 const LIMIT = 200;
 
-export const useStore = create<AtriumState>((set) => ({
+export const useStore = create<AtriumState>((set, get) => ({
   brand: { name: "Atrium", accentColor: "#1976d2" },
   setBrand: (brand) => set({ brand }),
 
@@ -368,6 +392,33 @@ export const useStore = create<AtriumState>((set) => ({
   removeZulipUnreadGlobal: () =>
     set((state) => (state.zulipUnreadGlobal === 0 ? state : { zulipUnreadGlobal: 0 })),
 
+  zulipViewState: {
+    drawerOpen: false,
+    zulipPageActive: false,
+    chatView: null,
+    activeThread: null,
+    activeThreadKey: null,
+    tabFocused: true,
+  },
+  setZulipViewState: (updates) =>
+    set((state) => ({ zulipViewState: { ...state.zulipViewState, ...updates } })),
+  isThreadActiveAndRead: (key, type): boolean => {
+    const v = get().zulipViewState;
+    if (!v.tabFocused) return false;
+    if (type === "channel") {
+      return (
+        v.zulipPageActive && v.activeThread === "channel" && v.activeThreadKey === key
+      );
+    }
+    // DMs live in the drawer.
+    return v.drawerOpen && v.activeThread === "dm" && v.activeThreadKey === key;
+  },
+  seedZulipUnread: ({ topics, dms }) =>
+    set(() => ({
+      zulipUnreadTopics: Object.fromEntries(topics.map((k) => [k, true as const])),
+      zulipUnreadDms: Object.fromEntries(dms.map((k) => [k, true as const])),
+    })),
+
   chatPanelWidth: loadDrawerWidth(),
   setChatPanelWidth: (width) => {
     saveDrawerWidth(width);
@@ -436,4 +487,49 @@ export function can(user: User | null, perm: PermissionKey): boolean {
 /** Reactive permission check for components. */
 export function useHasPermission(perm: PermissionKey): boolean {
   return useStore((s) => can(s.user, perm));
+}
+
+// ───── Hierarchical Zulip unread selectors ─────
+// Derived from the single source of truth (zulipUnreadTopics, a boolean map keyed
+// `${channelId}:${topicName}`). Pure functions so components recompute them via
+// useMemo — nothing extra is stored, so the counts can never drift out of sync.
+
+/** Per-channel unread topic count, keyed by channel id. */
+export function unreadByChannel(
+  unreadTopics: Record<string, boolean>,
+): Record<number, number> {
+  const out: Record<number, number> = {};
+  for (const key of Object.keys(unreadTopics)) {
+    const sep = key.indexOf(":");
+    if (sep === -1) continue;
+    const channelId = Number(key.slice(0, sep));
+    if (Number.isNaN(channelId)) continue;
+    out[channelId] = (out[channelId] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** Per-folder unread topic count, keyed by folder id (OTHER_KEY = -1 bucket). */
+export function unreadByFolder(
+  unreadTopics: Record<string, boolean>,
+  channels: ZulipChannel[],
+  folders: ZulipChannelFolder[],
+  otherKey = -1,
+): Record<number, number> {
+  const byChannel = unreadByChannel(unreadTopics);
+  const knownFolders = new Set(folders.map((f) => f.id));
+  const out: Record<number, number> = {};
+  for (const c of channels) {
+    const count = byChannel[c.id];
+    if (!count) continue;
+    const folderId =
+      c.folderId != null && knownFolders.has(c.folderId) ? c.folderId : otherKey;
+    out[folderId] = (out[folderId] ?? 0) + count;
+  }
+  return out;
+}
+
+/** Total unread channel-topic count across all channels. */
+export function unreadChannelTotal(unreadTopics: Record<string, boolean>): number {
+  return Object.keys(unreadTopics).length;
 }

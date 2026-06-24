@@ -9,10 +9,16 @@ import { sounds } from "../sound";
 /**
  * Browser-notification + sound + unread tracking for live Zulip traffic. Fires
  * for new channel messages and DMs that are NOT from the current user and NOT
- * the conversation currently open-and-focused. Channel messages notify only
- * when the tab is unfocused (they're chattier); DMs always notify (more
- * personal), matching how Atrium already treats internal DMs. Per-tag debounce
- * coalesces rapid bursts.
+ * the conversation the reader is actively looking at. "Actively looking at" is
+ * the composite view-state (zulipViewState): the right surface is open, that
+ * exact thread is the visible one, AND the tab is focused — see
+ * isThreadActiveAndRead. When the drawer is closed, the tab is unfocused, or a
+ * different thread is shown, the message COUNTS AS UNREAD and notifies.
+ *
+ * Channel messages notify only when not actively-read (browser-notif is further
+ * suppressed by notify() while the tab is visible, so a focused-but-different
+ * channel still pings via sound). DMs always fire (force) since they're personal.
+ * Per-tag debounce coalesces rapid bursts.
  *
  * Mounted once in AppShell so it runs on every authed page (Office AND /zulip).
  */
@@ -33,6 +39,9 @@ export function useZulipNotifications(): void {
       return true;
     };
 
+    // Our own Zulip tag, when known. Only used to skip self-sent messages — an
+    // unknown self no longer silences ALL notifications (that was the bug that
+    // swallowed everything before bootstrap finished).
     const selfTag = (): string | null => {
       const id = useStore.getState().zulipSelfId;
       return id != null ? `zulip:${id}` : null;
@@ -49,16 +58,12 @@ export function useZulipNotifications(): void {
     }) => {
       const state = useStore.getState();
       const self = selfTag();
-      // Until our own Zulip id is known we can't tell our own messages apart, so
-      // don't risk misclassifying a self-message as someone else's — skip it.
-      if (self == null) return;
-      if (message.sender.id === self) return;
+      // Skip only our OWN messages; unknown-self does NOT silence others.
+      if (self != null && message.sender.id === self) return;
 
       const key = `${channelId}:${topicName}`;
-      const isActive =
-        state.zulipActiveChannel === channelId && state.zulipActiveTopic === topicName;
-      const focused =
-        typeof document !== "undefined" && document.visibilityState === "visible";
+      const active = state.isThreadActiveAndRead(key, "channel");
+      const focused = state.zulipViewState.tabFocused;
 
       // Track Global-mapped traffic separately for the aggregate header badge.
       // Count it as unread unless the Global tab is open-and-focused.
@@ -66,16 +71,14 @@ export function useZulipNotifications(): void {
         state.globalZulipChannelId === channelId &&
         state.globalZulipTopicName === topicName;
       if (isGlobal) {
-        const globalOpen = state.chatOpen && state.chatView === "global";
-        if (globalOpen && focused) {
-          state.removeZulipUnreadGlobal();
-        } else {
-          state.addZulipUnreadGlobal();
-        }
+        const v = state.zulipViewState;
+        const globalActive = v.tabFocused && v.drawerOpen && v.chatView === "global";
+        if (globalActive) state.removeZulipUnreadGlobal();
+        else state.addZulipUnreadGlobal();
       }
 
-      // The open-and-focused conversation needs no nudge.
-      if (isActive && focused) {
+      // The actively-read thread needs no nudge.
+      if (active) {
         state.removeZulipUnreadTopic(key);
         return;
       }
@@ -93,7 +96,8 @@ export function useZulipNotifications(): void {
           tag,
         });
       }
-      if (state.prefs.globalChatSoundEnabled) sounds.tap();
+      // Channels are chattier, so only ping with sound when the tab is unfocused.
+      if (state.prefs.globalChatSoundEnabled && !focused) sounds.tap();
     };
 
     const onDm = ({
@@ -125,19 +129,12 @@ export function useZulipNotifications(): void {
         lastMessageId,
       });
 
-      // Same self-guard as channel messages: don't notify until we can reliably
-      // distinguish our own outgoing DMs from incoming ones.
-      if (self == null) return;
-      if (message.sender.id === self) return;
+      // Skip only our OWN DMs; unknown-self does NOT silence others.
+      if (self != null && message.sender.id === self) return;
 
-      const activeKey = state.zulipActiveDmParticipants
-        ? participantKey(state.zulipActiveDmParticipants)
-        : null;
-      const isActive = activeKey === key;
-      const focused =
-        typeof document !== "undefined" && document.visibilityState === "visible";
+      const active = state.isThreadActiveAndRead(key, "dm");
 
-      if (isActive && focused) {
+      if (active) {
         state.removeZulipUnreadDm(key);
         return;
       }
@@ -152,17 +149,28 @@ export function useZulipNotifications(): void {
           body: stripHtml(message.body),
           icon: message.sender.imageUrl,
           tag,
+          // DMs are personal — fire even when the tab is visible (but on a
+          // different thread).
+          force: true,
         });
       }
       if (state.prefs.soundsEnabled) sounds.chime();
     };
 
+    // Zulip-grounded unread snapshot (from /register unread_msgs) — replaces the
+    // local maps so counts survive reload + converge across devices.
+    const onUnreadSnapshot = (payload: { topics: string[]; dms: string[] }) => {
+      useStore.getState().seedZulipUnread(payload);
+    };
+
     socket.on("zulip:message", onMessage);
     socket.on("zulip:dm", onDm);
+    socket.on("zulip:unread-snapshot", onUnreadSnapshot);
 
     return () => {
       socket.off("zulip:message", onMessage);
       socket.off("zulip:dm", onDm);
+      socket.off("zulip:unread-snapshot", onUnreadSnapshot);
     };
   }, []);
 }

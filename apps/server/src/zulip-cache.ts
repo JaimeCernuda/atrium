@@ -42,10 +42,27 @@ export class ZulipDataCache {
    *                       so the manager can fan them out to the user's sockets
    */
   constructor(
-    private readonly fetchChannels: () => Promise<ChannelsData>,
-    private readonly fetchTopics: (channelId: number) => Promise<ZulipTopic[]>,
-    private readonly onChannels: (data: ChannelsData) => void,
+    private fetchChannels: () => Promise<ChannelsData>,
+    private fetchTopics: (channelId: number) => Promise<ZulipTopic[]>,
+    private onChannels: (data: ChannelsData) => void,
   ) {}
+
+  /**
+   * Re-point the cache's fetch/fan-out callbacks at a NEW live client. When the
+   * cache survives a release()/reconnect (it lives in the process-level map), the
+   * original closures captured a client that has since stopped. Rebinding swaps
+   * the three callbacks while keeping all cached data, so cached channels/topics
+   * serve instantly yet any background refresh runs through the current client.
+   */
+  rebind(
+    fetchChannels: () => Promise<ChannelsData>,
+    fetchTopics: (channelId: number) => Promise<ZulipTopic[]>,
+    onChannels: (data: ChannelsData) => void,
+  ): void {
+    this.fetchChannels = fetchChannels;
+    this.fetchTopics = fetchTopics;
+    this.onChannels = onChannels;
+  }
 
   async getChannels(): Promise<ChannelsData> {
     const now = Date.now();
