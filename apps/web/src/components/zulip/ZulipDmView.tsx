@@ -124,6 +124,8 @@ export function ZulipDmView() {
   const activeParticipants = useStore((s) => s.zulipActiveDmParticipants);
   const setActiveParticipants = useStore((s) => s.setZulipActiveDmParticipants);
   const setDmMessages = useStore((s) => s.setZulipDmMessages);
+  const unreadDms = useStore((s) => s.zulipUnreadDms);
+  const removeZulipUnreadDm = useStore((s) => s.removeZulipUnreadDm);
   const [composeOpen, setComposeOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -146,6 +148,11 @@ export function ZulipDmView() {
       },
     );
   }, [activeParticipants, activeKey, dmsByParticipants, setDmMessages]);
+
+  // Opening a conversation clears its unread marker.
+  useEffect(() => {
+    if (activeKey != null) removeZulipUnreadDm(activeKey);
+  }, [activeKey, removeZulipUnreadDm]);
 
   const send = (body: string) => {
     if (!activeParticipants) return;
@@ -211,7 +218,12 @@ export function ZulipDmView() {
   };
   const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !(c[id] ?? false) }));
 
-  const renderUser = (u: ZulipUser) => (
+  const renderUser = (u: ZulipUser) => {
+    const dmKey = participantKey(
+      selfId != null ? [selfId, u.zulipUserId] : [u.zulipUserId],
+    );
+    const hasUnread = Boolean(unreadDms[dmKey]);
+    return (
     <ListItemButton
       key={u.zulipUserId}
       sx={{ pl: 3 }}
@@ -223,7 +235,9 @@ export function ZulipDmView() {
         {u.name.charAt(0)}
       </Avatar>
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="body2">{u.name}</Typography>
+        <Typography variant="body2" sx={{ fontWeight: hasUnread ? 700 : 400 }}>
+          {u.name}
+        </Typography>
         <Typography
           variant="caption"
           color="text.secondary"
@@ -232,8 +246,14 @@ export function ZulipDmView() {
           {u.email}
         </Typography>
       </Box>
+      {hasUnread && (
+        <Box
+          sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "secondary.main", ml: 1, flexShrink: 0 }}
+        />
+      )}
     </ListItemButton>
-  );
+    );
+  };
 
   return (
     <Box sx={{ flexGrow: 1, overflowY: "auto" }}>

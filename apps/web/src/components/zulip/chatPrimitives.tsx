@@ -1,8 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import { Avatar, Box, IconButton, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Avatar,
+  Box,
+  CircularProgress,
+  IconButton,
+  List,
+  ListItemButton,
+  Paper,
+  Popper,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
+import AttachFileIcon from "@mui/icons-material/AttachFile";
+import GroupIcon from "@mui/icons-material/Group";
 import DOMPurify from "dompurify";
-import type { ChatMessage } from "@atrium/shared";
+import type { ChatMessage, ZulipUser, ZulipUserGroup } from "@atrium/shared";
+import { useStore } from "../../store";
 
 // Zulip already sanitizes server-side; DOMPurify is defense-in-depth before we
 // hand raw HTML to dangerouslySetInnerHTML. Strict allowlist — no script/style,
@@ -159,6 +175,44 @@ export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId:
   );
 }
 
+// A mention candidate — either a Zulip user or a user group — normalized so the
+// suggestion list and insertion logic don't care which kind it is.
+interface MentionItem {
+  kind: "user" | "group";
+  id: number;
+  name: string;
+  detail?: string; // email for users, member count for groups
+  imageUrl?: string;
+  // The exact markup Zulip renders to a mention span on receipt.
+  markup: string; // `@**Full Name**` (user) / `@*group-name*` (group)
+}
+
+const MENTION_LIMIT = 8;
+
+/** Open mention state: the "@" position in the body and the typed query after it. */
+interface MentionState {
+  at: number; // index of the "@" in body
+  query: string; // text typed after "@" (before caret)
+}
+
+// Find an active "@mention" token immediately before the caret. A token is the
+// "@" plus the run of non-whitespace after it; it's active only when the "@" is
+// at the start or preceded by whitespace (so emails like a@b don't trigger it).
+function detectMention(value: string, caret: number): MentionState | null {
+  let i = caret - 1;
+  while (i >= 0) {
+    const ch = value[i]!;
+    if (ch === "@") {
+      const before = i === 0 ? " " : value[i - 1]!;
+      if (!/\s/.test(before)) return null;
+      return { at: i, query: value.slice(i + 1, caret) };
+    }
+    if (/\s/.test(ch)) return null;
+    i -= 1;
+  }
+  return null;
+}
+
 export function Composer({
   disabled,
   onSend,
@@ -166,35 +220,277 @@ export function Composer({
   disabled?: boolean;
   onSend: (body: string) => void;
 }) {
+  const zulipUsers = useStore((s) => s.zulipUsers);
+  const zulipUserGroups = useStore((s) => s.zulipUserGroups);
+
   const [body, setBody] = useState("");
+  const [mention, setMention] = useState<MentionState | null>(null);
+  const [highlight, setHighlight] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+
+  // Build the full candidate set once per users/groups change; filter per query.
+  const allCandidates = useMemo<MentionItem[]>(() => {
+    const users: MentionItem[] = zulipUsers.map((u: ZulipUser) => ({
+      kind: "user" as const,
+      id: u.zulipUserId,
+      name: u.name,
+      detail: u.email,
+      imageUrl: u.imageUrl,
+      markup: `@**${u.name}**`,
+    }));
+    const groups: MentionItem[] = zulipUserGroups.map((g: ZulipUserGroup) => ({
+      kind: "group" as const,
+      id: g.id,
+      name: g.name,
+      detail: `${g.memberIds.length} member${g.memberIds.length === 1 ? "" : "s"}`,
+      markup: `@*${g.name}*`,
+    }));
+    return [...users, ...groups];
+  }, [zulipUsers, zulipUserGroups]);
+
+  const suggestions = useMemo<MentionItem[]>(() => {
+    if (!mention) return [];
+    const q = mention.query.trim().toLowerCase();
+    const matches = q
+      ? allCandidates.filter(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            (c.detail?.toLowerCase().includes(q) ?? false),
+        )
+      : allCandidates;
+    return matches.slice(0, MENTION_LIMIT);
+  }, [mention, allCandidates]);
+
+  const mentionOpen = mention != null && suggestions.length > 0;
+
+  useEffect(() => {
+    setHighlight(0);
+  }, [mention?.query, mention?.at]);
+
+  // Insert text at the current caret, replacing an optional [start,end) range,
+  // and place the caret right after the inserted text on the next tick.
+  const insertAtCaret = (text: string, replaceStart?: number, replaceEnd?: number) => {
+    const el = inputRef.current;
+    const start = replaceStart ?? el?.selectionStart ?? body.length;
+    const end = replaceEnd ?? el?.selectionEnd ?? start;
+    const next = body.slice(0, start) + text + body.slice(end);
+    setBody(next);
+    const caret = start + text.length;
+    requestAnimationFrame(() => {
+      const node = inputRef.current;
+      if (node) {
+        node.focus();
+        node.setSelectionRange(caret, caret);
+      }
+    });
+  };
+
+  const applyMention = (item: MentionItem) => {
+    if (!mention) return;
+    const el = inputRef.current;
+    const caret = el?.selectionEnd ?? mention.at + 1 + mention.query.length;
+    // Replace "@" + typed query with the markup, then a trailing space.
+    insertAtCaret(item.markup + " ", mention.at, caret);
+    setMention(null);
+  };
+
+  const onChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    setBody(value);
+    const caret = e.target.selectionStart ?? value.length;
+    setMention(detectMention(value, caret));
+  };
+
   const send = () => {
     const trimmed = body.trim();
     if (!trimmed || disabled) return;
     onSend(trimmed);
     setBody("");
+    setMention(null);
   };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (mentionOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlight((h) => (h + 1) % suggestions.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlight((h) => (h - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const pick = suggestions[highlight];
+        if (pick) applyMention(pick);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMention(null);
+        return;
+      }
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  // ── File upload ──
+  const uploadFile = async (file: File) => {
+    if (disabled || uploading) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      const res = await fetch("/api/zulip/upload-file", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as { error?: string } | null;
+        setUploadError(err?.error ?? "Upload failed.");
+        return;
+      }
+      const { uri } = (await res.json()) as { uri: string };
+      const isImage = file.type.startsWith("image/");
+      const name = file.name || "file";
+      // Zulip auto-embeds images from a markdown image link; other files render
+      // as a download link.
+      insertAtCaret(`${isImage ? "!" : ""}[${name}](${uri}) `);
+    } catch {
+      setUploadError("Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) void uploadFile(file);
+    e.target.value = ""; // allow re-picking the same file
+  };
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const file = Array.from(e.clipboardData.files)[0];
+    if (file) {
+      e.preventDefault();
+      void uploadFile(file);
+    }
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    const file = Array.from(e.dataTransfer.files)[0];
+    if (file) {
+      e.preventDefault();
+      void uploadFile(file);
+    }
+  };
+
   return (
-    <Stack direction="row" spacing={1} sx={{ p: 1, borderTop: 1, borderColor: "divider" }}>
-      <TextField
-        size="small"
-        fullWidth
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
+    <Box
+      onDrop={onDrop}
+      onDragOver={(e) => e.preventDefault()}
+      sx={{ borderTop: 1, borderColor: "divider" }}
+    >
+      {uploadError && (
+        <Typography variant="caption" color="error" sx={{ px: 2, pt: 0.5, display: "block" }}>
+          {uploadError}
+        </Typography>
+      )}
+      <Stack direction="row" spacing={1} alignItems="flex-end" sx={{ p: 1 }} ref={anchorRef}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          hidden
+          onChange={onFilePick}
+        />
+        <Tooltip title="Attach a file">
+          <span>
+            <IconButton
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || uploading}
+              size="small"
+            >
+              {uploading ? <CircularProgress size={20} /> : <AttachFileIcon />}
+            </IconButton>
+          </span>
+        </Tooltip>
+        <TextField
+          size="small"
+          fullWidth
+          inputRef={inputRef}
+          value={body}
+          onChange={onChange}
+          onKeyDown={onKeyDown}
+          onPaste={onPaste}
+          placeholder={
+            disabled
+              ? "Pick a conversation…"
+              : uploading
+                ? "Uploading…"
+                : "Type a message…"
           }
-        }}
-        placeholder={disabled ? "Pick a conversation…" : "Type a message…"}
-        disabled={disabled}
-        multiline
-        maxRows={4}
-      />
-      <IconButton color="primary" onClick={send} disabled={disabled}>
-        <SendIcon />
-      </IconButton>
-    </Stack>
+          disabled={disabled}
+          multiline
+          maxRows={4}
+        />
+        <IconButton color="primary" onClick={send} disabled={disabled}>
+          <SendIcon />
+        </IconButton>
+      </Stack>
+      <Popper
+        open={mentionOpen}
+        anchorEl={anchorRef.current}
+        placement="top-start"
+        style={{ zIndex: 1400, width: anchorRef.current?.clientWidth }}
+      >
+        <Paper elevation={4} sx={{ maxHeight: 240, overflowY: "auto", m: 0.5 }}>
+          <List dense disablePadding>
+            {suggestions.map((item, idx) => (
+              <ListItemButton
+                key={`${item.kind}-${item.id}`}
+                selected={idx === highlight}
+                onMouseDown={(e) => {
+                  e.preventDefault(); // keep focus in the input
+                  applyMention(item);
+                }}
+              >
+                {item.kind === "user" ? (
+                  <Avatar src={item.imageUrl} sx={{ width: 24, height: 24, mr: 1 }}>
+                    {item.name.charAt(0)}
+                  </Avatar>
+                ) : (
+                  <Avatar sx={{ width: 24, height: 24, mr: 1 }}>
+                    <GroupIcon sx={{ fontSize: 16 }} />
+                  </Avatar>
+                )}
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" noWrap>
+                    {item.name}
+                  </Typography>
+                  {item.detail && (
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                      {item.detail}
+                    </Typography>
+                  )}
+                </Box>
+              </ListItemButton>
+            ))}
+          </List>
+        </Paper>
+      </Popper>
+    </Box>
   );
 }
 

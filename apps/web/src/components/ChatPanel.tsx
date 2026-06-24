@@ -1,4 +1,6 @@
+import { useCallback, useEffect, useRef } from "react";
 import {
+  Badge,
   Box,
   Drawer,
   IconButton,
@@ -9,11 +11,10 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { useStore } from "../store";
+import { clampDrawerWidth } from "../prefs";
 import { MessageList, Composer, openZulip } from "./zulip/chatPrimitives";
 import { ZulipDmView } from "./zulip/ZulipDmView";
 import { UnlinkedZulipFallback } from "./UnlinkedZulipFallback";
-
-const DRAWER_WIDTH = 360;
 
 export function ChatPanel() {
   const open = useStore((s) => s.chatOpen);
@@ -25,8 +26,47 @@ export function ChatPanel() {
   const globalZulipChannelId = useStore((s) => s.globalZulipChannelId);
   const globalZulipTopicName = useStore((s) => s.globalZulipTopicName);
   const globalMessages = useStore((s) => s.globalMessages);
+  const width = useStore((s) => s.chatPanelWidth);
+  const setChatPanelWidth = useStore((s) => s.setChatPanelWidth);
+  const unreadDms = useStore((s) => s.zulipUnreadDms);
+
+  const dmUnreadCount = Object.keys(unreadDms).length;
 
   const onClose = () => setChatOpen(false);
+
+  // Drag the drawer's left edge to resize. We track the drag at the document
+  // level so the pointer can leave the 6px handle without dropping the gesture,
+  // and persist the clamped width once on release.
+  const dragging = useRef(false);
+  const onResizeDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      // Drawer is anchored right: width grows as the pointer moves left.
+      setChatPanelWidth(clampDrawerWidth(window.innerWidth - e.clientX));
+    };
+    const onUp = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [setChatPanelWidth]);
 
   // The drawer hosts only the Global and DMs tabs; the full Zulip surface lives
   // on the /zulip route. Coerce any stale zulip view back to a tab the drawer
@@ -78,20 +118,48 @@ export function ChatPanel() {
       open={open}
       onClose={onClose}
       variant="persistent"
-      PaperProps={{ sx: { width: DRAWER_WIDTH } }}
+      PaperProps={{ sx: { width, overflow: "hidden" } }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 1, pl: 2 }}>
-        <Typography variant="h6">Chat</Typography>
-        <IconButton onClick={onClose} size="small">
-          <CloseIcon />
-        </IconButton>
-      </Stack>
-      <Tabs value={drawerTab} onChange={(_, v) => setTab(v)} variant="fullWidth">
-        <Tab value="global" label="Global" />
-        <Tab value="dm" label="DMs" />
-      </Tabs>
+      {/* Left-edge resize handle — drag to widen/narrow the drawer. */}
+      <Box
+        onMouseDown={onResizeDown}
+        sx={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 6,
+          cursor: "col-resize",
+          zIndex: 2,
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      />
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", pl: "6px" }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 1, pl: 2 }}>
+          <Typography variant="h6">Chat</Typography>
+          <IconButton onClick={onClose} size="small">
+            <CloseIcon />
+          </IconButton>
+        </Stack>
+        <Tabs value={drawerTab} onChange={(_, v) => setTab(v)} variant="fullWidth">
+          <Tab value="global" label="Global" />
+          <Tab
+            value="dm"
+            label={
+              <Badge
+                color="secondary"
+                badgeContent={dmUnreadCount}
+                invisible={dmUnreadCount === 0}
+                sx={{ "& .MuiBadge-badge": { right: -14, top: 2 } }}
+              >
+                DMs
+              </Badge>
+            }
+          />
+        </Tabs>
 
-      {drawerTab === "dm" ? <ZulipDmView /> : renderGlobal()}
+        {drawerTab === "dm" ? <ZulipDmView /> : renderGlobal()}
+      </Box>
     </Drawer>
   );
 }

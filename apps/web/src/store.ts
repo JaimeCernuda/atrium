@@ -11,7 +11,14 @@ import type {
   ZulipUser,
   ZulipUserGroup,
 } from "@atrium/shared";
-import { loadPrefs, savePrefs, type ThemeMode, type UserPrefs } from "./prefs";
+import {
+  loadDrawerWidth,
+  loadPrefs,
+  savePrefs,
+  saveDrawerWidth,
+  type ThemeMode,
+  type UserPrefs,
+} from "./prefs";
 
 interface AtriumState {
   brand: { name: string; shortName?: string; logoUrl?: string; accentColor: string };
@@ -101,6 +108,19 @@ interface AtriumState {
   globalZulipChannelId: number | null;
   globalZulipTopicName: string | null;
   setGlobalZulipConfig: (channelId: number | null, topicName: string | null) => void;
+
+  // ── Zulip unread tracking ──
+  // Keys: channel topics use `${channelId}:${topicName}`; DMs use participantKey.
+  zulipUnreadTopics: Record<string, boolean>;
+  zulipUnreadDms: Record<string, boolean>;
+  addZulipUnreadTopic: (key: string) => void;
+  removeZulipUnreadTopic: (key: string) => void;
+  addZulipUnreadDm: (key: string) => void;
+  removeZulipUnreadDm: (key: string) => void;
+
+  // ── Resizable chat drawer width (px, persisted) ──
+  chatPanelWidth: number;
+  setChatPanelWidth: (width: number) => void;
 
   patchUserEverywhere: (user: User) => void;
 
@@ -270,6 +290,41 @@ export const useStore = create<AtriumState>((set) => ({
   globalZulipTopicName: null,
   setGlobalZulipConfig: (globalZulipChannelId, globalZulipTopicName) =>
     set({ globalZulipChannelId, globalZulipTopicName }),
+
+  zulipUnreadTopics: {},
+  zulipUnreadDms: {},
+  addZulipUnreadTopic: (key) =>
+    set((state) =>
+      state.zulipUnreadTopics[key]
+        ? state
+        : { zulipUnreadTopics: { ...state.zulipUnreadTopics, [key]: true } },
+    ),
+  removeZulipUnreadTopic: (key) =>
+    set((state) => {
+      if (!state.zulipUnreadTopics[key]) return state;
+      const next = { ...state.zulipUnreadTopics };
+      delete next[key];
+      return { zulipUnreadTopics: next };
+    }),
+  addZulipUnreadDm: (key) =>
+    set((state) =>
+      state.zulipUnreadDms[key]
+        ? state
+        : { zulipUnreadDms: { ...state.zulipUnreadDms, [key]: true } },
+    ),
+  removeZulipUnreadDm: (key) =>
+    set((state) => {
+      if (!state.zulipUnreadDms[key]) return state;
+      const next = { ...state.zulipUnreadDms };
+      delete next[key];
+      return { zulipUnreadDms: next };
+    }),
+
+  chatPanelWidth: loadDrawerWidth(),
+  setChatPanelWidth: (width) => {
+    saveDrawerWidth(width);
+    set({ chatPanelWidth: width });
+  },
 
   patchUserEverywhere: (u) =>
     set((state) => ({

@@ -147,4 +147,116 @@ export async function registerZulipLink(app: FastifyInstance, config: Config): P
       return reply.send(buffer);
     },
   );
+
+  // Composer attachments. Zulip uploads need the user's own key server-side, so
+  // the browser POSTs the file here (multipart) and we forward it to Zulip's
+  // POST /user_uploads with that user's Basic auth, returning the { uri } Zulip
+  // assigns. The composer then drops that uri into the message as markdown.
+  // Capped at 20MB and restricted to a sane mime allowlist; bytes are never
+  // logged. @fastify/multipart is registered globally at index.ts.
+  app.post("/api/zulip/upload-file", async (req, reply) => {
+    const user = await requireUser(req, reply, cookieName);
+    if (!user) return reply;
+
+    const link = await getZulipKey(user.id);
+    if (!link) {
+      return reply.code(401).send({ error: "Zulip is not linked." });
+    }
+
+    let apiKey: string;
+    try {
+      apiKey = decryptZulipKey(link.zulipApiKeyEnc);
+    } catch {
+      return reply.code(401).send({ error: "Zulip key needs re-linking." });
+    }
+
+    let data;
+    try {
+      data = await req.file({ limits: { fileSize: UPLOAD_MAX_BYTES } });
+    } catch {
+      return reply.code(400).send({ error: "Could not read the uploaded file." });
+    }
+    if (!data || !data.filename) {
+      return reply.code(400).send({ error: "No file was provided." });
+    }
+    if (!isAllowedUploadMime(data.mimetype)) {
+      return reply.code(415).send({ error: "That file type can't be uploaded." });
+    }
+
+    let buf: Buffer;
+    try {
+      buf = await data.toBuffer();
+    } catch {
+      return reply.code(400).send({ error: "Could not read the uploaded file." });
+    }
+    // @fastify/multipart marks the stream truncated when it hits the per-file
+    // limit rather than throwing; treat that as too-large.
+    if (data.file.truncated || buf.byteLength > UPLOAD_MAX_BYTES) {
+      return reply.code(413).send({ error: "File too large (20MB max)." });
+    }
+
+    const auth =
+      "Basic " + Buffer.from(`${link.zulipEmail}:${apiKey}`).toString("base64");
+    const form = new FormData();
+    // Copy into a standalone Uint8Array so the Blob part is backed by a plain
+    // ArrayBuffer (Buffer's pooled/SharedArrayBuffer backing isn't a BlobPart).
+    const bytes = new Uint8Array(buf.byteLength);
+    bytes.set(buf);
+    form.append("file", new Blob([bytes], { type: data.mimetype }), data.filename);
+
+    let upstream: Response;
+    try {
+      upstream = await fetch(new URL("/api/v1/user_uploads", ZULIP_REALM), {
+        method: "POST",
+        headers: { Authorization: auth },
+        body: form,
+      });
+    } catch (err) {
+      req.log.error(
+        { err: err instanceof Error ? err.message : String(err) },
+        "zulip file upload fetch failed",
+      );
+      return reply.code(502).send({ error: "Upstream Zulip upload failed." });
+    }
+
+    if (!upstream.ok) {
+      return reply.code(502).send({ error: `Zulip returned ${upstream.status}.` });
+    }
+
+    const json = (await upstream.json()) as { uri?: string };
+    if (!json.uri) {
+      return reply.code(502).send({ error: "Zulip returned no upload URI." });
+    }
+    // Log metadata only — never the file contents.
+    req.log.info(
+      { filename: data.filename, size: buf.byteLength },
+      "zulip file uploaded",
+    );
+    return { uri: json.uri };
+  });
+}
+
+const UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Mime allowlist for composer attachments. Images, common documents, archives,
+ * and video. Anything else is rejected before we forward to Zulip.
+ */
+function isAllowedUploadMime(mime: string | undefined): boolean {
+  if (!mime) return false;
+  if (mime.startsWith("image/")) return true;
+  if (mime.startsWith("video/")) return true;
+  if (mime.startsWith("audio/")) return true;
+  if (mime.startsWith("text/")) return true;
+  return [
+    "application/pdf",
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ].includes(mime);
 }

@@ -21,8 +21,7 @@ import { UserMenu } from "./UserMenu";
 import { ChatPanel } from "./ChatPanel";
 import { PingSnackbar } from "./PingSnackbar";
 import { AdminMenu } from "./AdminMenu";
-
-const DRAWER_WIDTH = 360;
+import { useZulipNotifications } from "../hooks/useZulipNotifications";
 
 const TABS: Array<{ label: string; path: string; permission?: PermissionKey }> = [
   { label: "Office", path: "/" },
@@ -48,6 +47,11 @@ export function AppShell({ children }: Props) {
   const user = useStore((s) => s.user);
   const chatOpen = useStore((s) => s.chatOpen);
   const setChatOpen = useStore((s) => s.setChatOpen);
+  const chatPanelWidth = useStore((s) => s.chatPanelWidth);
+
+  // Browser notifications + sound + unread for live Zulip traffic, on every
+  // authed page (this shell wraps them all; Login is outside it).
+  useZulipNotifications();
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
@@ -65,7 +69,7 @@ export function AppShell({ children }: Props) {
               ? t.transitions.duration.enteringScreen
               : t.transitions.duration.leavingScreen,
           }),
-        pr: { xs: 0, md: chatOpen ? `${DRAWER_WIDTH}px` : 0 },
+        pr: { xs: 0, md: chatOpen ? `${chatPanelWidth}px` : 0 },
       }}
     >
       <AppBar

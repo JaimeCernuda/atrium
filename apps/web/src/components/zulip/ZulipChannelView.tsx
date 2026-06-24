@@ -34,6 +34,8 @@ export function ZulipChannelView({ meId }: { meId: string }) {
   const setActiveTopic = useStore((s) => s.setZulipActiveTopic);
   const setTopics = useStore((s) => s.setZulipTopics);
   const setMessages = useStore((s) => s.setZulipMessages);
+  const unreadTopics = useStore((s) => s.zulipUnreadTopics);
+  const removeZulipUnreadTopic = useStore((s) => s.removeZulipUnreadTopic);
 
   // Topic-first: as soon as a channel is open, load ALL its topics (once).
   // Also fixes the room-bound auto-focus path, which sets activeChannel without
@@ -60,6 +62,13 @@ export function ZulipChannelView({ meId }: { meId: string }) {
     );
   }, [activeChannel, activeTopic, messagesByTopic, setMessages]);
 
+  // Opening a topic clears its unread marker.
+  useEffect(() => {
+    if (activeChannel != null && activeTopic != null) {
+      removeZulipUnreadTopic(`${activeChannel}:${activeTopic}`);
+    }
+  }, [activeChannel, activeTopic, removeZulipUnreadTopic]);
+
   if (!linked) {
     return (
       <UnlinkedZulipFallback
@@ -83,15 +92,28 @@ export function ZulipChannelView({ meId }: { meId: string }) {
     const channel = channels.find((c) => c.id === activeChannel);
     return (
       <>
-        <Stack direction="row" alignItems="center" sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
-          <IconButton size="small" onClick={() => setActiveChannel(activeChannel, null)}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          sx={{ p: 1, borderBottom: 1, borderColor: "divider", minWidth: 0 }}
+        >
+          <IconButton
+            size="small"
+            onClick={() => setActiveChannel(activeChannel, null)}
+            aria-label="Back to topics"
+            sx={{ flexShrink: 0 }}
+          >
             <ArrowBackIcon fontSize="small" />
           </IconButton>
-          <TagIcon fontSize="small" sx={{ mx: 0.5, color: "text.secondary" }} />
-          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          <TagIcon fontSize="small" sx={{ mx: 0.5, color: "text.secondary", flexShrink: 0 }} />
+          <Typography variant="body2" noWrap sx={{ fontWeight: 600, minWidth: 0 }}>
             {channel?.name ?? activeChannel}
           </Typography>
-          <Chip label={activeTopic} size="small" sx={{ ml: 1 }} />
+          <Chip
+            label={activeTopic}
+            size="small"
+            sx={{ ml: 1, maxWidth: "50%", flexShrink: 1 }}
+          />
         </Stack>
         <MessageList messages={messages} meId={meId} />
         <Composer disabled={!connected} onSend={send} />
@@ -131,18 +153,28 @@ export function ZulipChannelView({ meId }: { meId: string }) {
             </Typography>
           ) : (
             <List dense disablePadding>
-              {topics.map((t) => (
-                <ListItemButton
-                  key={t.name}
-                  onClick={() => {
-                    setActiveChannel(activeChannel, t.name);
-                    setActiveTopic(t.name);
-                  }}
-                >
-                  <TagIcon fontSize="small" sx={{ mr: 1, color: "text.disabled" }} />
-                  <Typography variant="body2">{t.name}</Typography>
-                </ListItemButton>
-              ))}
+              {topics.map((t) => {
+                const unread = Boolean(unreadTopics[`${activeChannel}:${t.name}`]);
+                return (
+                  <ListItemButton
+                    key={t.name}
+                    onClick={() => {
+                      setActiveChannel(activeChannel, t.name);
+                      setActiveTopic(t.name);
+                    }}
+                  >
+                    <TagIcon fontSize="small" sx={{ mr: 1, color: "text.disabled" }} />
+                    <Typography variant="body2" sx={{ flex: 1, fontWeight: unread ? 700 : 400 }}>
+                      {t.name}
+                    </Typography>
+                    {unread && (
+                      <Box
+                        sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "secondary.main", ml: 1 }}
+                      />
+                    )}
+                  </ListItemButton>
+                );
+              })}
             </List>
           )}
         </Box>
