@@ -26,9 +26,11 @@ const STEPS: TourStep[] = [
     placement: "bottom",
   },
   {
-    selector: '[data-tour="office"]',
-    title: "This is your desk",
-    body: "The office floor. Find your spot, drop into a room, and see who's around.",
+    // Centered (not anchored to the office grid): the grid spans the whole
+    // viewport, which pushed the Popper off-screen and made the tour look broken.
+    selector: null,
+    title: "This is your space",
+    body: "The office floor below is yours — find your desk, drop into a room, and see who's around.",
     placement: "bottom",
   },
   {

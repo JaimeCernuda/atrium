@@ -40,6 +40,13 @@ const DESK_CATEGORY = "Desks";
 const SHARED_CATEGORY = "Projects";
 const SHARED_COLOR = "#388e3c";
 const SHARED_PROJECTS = ["Agentic", "IOWarp", "Jarvis", "ChronoLog", "Paper Reading"];
+// Broad rooms whose Zulip channel is named differently from the room (or has
+// none). "Agentic" the room binds the "Agentic Projects" channel; Paper Reading
+// has no channel.
+const SHARED_PROJECT_CHANNEL: Record<string, string | null> = {
+  Agentic: "Agentic Projects",
+  "Paper Reading": null,
+};
 
 // Per-student desk -> project channel(s) + the research ("Papers") room they
 // supersede. Jie Ye's single desk binds both DyTO and Pythia (Pythia is folded
@@ -371,8 +378,9 @@ export function AdminRooms() {
     }
 
     for (const name of SHARED_PROJECTS) {
-      const ch = channelByName.get(normalizeForMatch(name));
-      if (!ch && name !== "Paper Reading") res.unmatched.push(`project channel "${name}"`);
+      const channelName = name in SHARED_PROJECT_CHANNEL ? SHARED_PROJECT_CHANNEL[name] : name;
+      const ch = channelName ? channelByName.get(normalizeForMatch(channelName)) : undefined;
+      if (!ch && channelName !== null) res.unmatched.push(`project channel "${channelName}"`);
       const ids = ch ? [ch.id] : [];
       const existing = existingSharedByName.get(name.toLowerCase());
       if (existing) {
