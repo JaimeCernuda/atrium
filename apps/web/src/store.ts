@@ -125,6 +125,10 @@ interface AtriumState {
   zulipLinkDialogOpen: boolean;
   setZulipLinkDialogOpen: (open: boolean) => void;
 
+  // ── First-run welcome walkthrough ──
+  welcomeTourOpen: boolean;
+  setWelcomeTourOpen: (open: boolean) => void;
+
   // ── Global -> Zulip channel+topic mapping ──
   globalZulipChannelId: number | null;
   globalZulipTopicName: string | null;
@@ -354,6 +358,9 @@ export const useStore = create<AtriumState>((set, get) => ({
   setZulipUserGroupPolicy: (zulipUserGroupPolicy) => set({ zulipUserGroupPolicy }),
   zulipLinkDialogOpen: false,
   setZulipLinkDialogOpen: (zulipLinkDialogOpen) => set({ zulipLinkDialogOpen }),
+
+  welcomeTourOpen: false,
+  setWelcomeTourOpen: (welcomeTourOpen) => set({ welcomeTourOpen }),
 
   globalZulipChannelId: null,
   globalZulipTopicName: null,

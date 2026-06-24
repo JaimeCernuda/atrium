@@ -98,6 +98,7 @@ export function Office() {
         )}
 
         <Box
+          data-tour="office"
           sx={{
             display: "grid",
             gap: { xs: 2, md: 3 },

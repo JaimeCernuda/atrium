@@ -29,6 +29,7 @@ import SettingsBrightnessIcon from "@mui/icons-material/SettingsBrightness";
 import NotificationsIcon from "@mui/icons-material/Notifications";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import ForumIcon from "@mui/icons-material/Forum";
+import ExploreIcon from "@mui/icons-material/Explore";
 import { useNavigate } from "react-router-dom";
 import type { User } from "@atrium/shared";
 import { useStore } from "../store";
@@ -42,6 +43,7 @@ export function UserMenu() {
   const setUser = useStore((s) => s.setUser);
   const zulipLinked = useStore((s) => s.zulipLinked);
   const setZulipLinkDialogOpen = useStore((s) => s.setZulipLinkDialogOpen);
+  const setWelcomeTourOpen = useStore((s) => s.setWelcomeTourOpen);
   const themeMode = useStore((s) => s.prefs.themeMode);
   const setThemeMode = useStore((s) => s.setThemeMode);
   const notificationsEnabled = useStore((s) => s.prefs.notificationsEnabled);
@@ -165,7 +167,11 @@ export function UserMenu() {
 
   return (
     <>
-      <IconButton size="small" onClick={(e) => setAnchor(e.currentTarget)}>
+      <IconButton
+        size="small"
+        data-tour="user-menu"
+        onClick={(e) => setAnchor(e.currentTarget)}
+      >
         <Avatar src={user.imageUrl} alt={user.name} sx={{ width: 32, height: 32 }}>
           {user.name.charAt(0)}
         </Avatar>
@@ -193,6 +199,20 @@ export function UserMenu() {
             <ArticleIcon fontSize="small" />
           </ListItemIcon>
           My submissions
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            navigate("/");
+            // Let the office route render so the tour's anchors exist before it
+            // tries to position over them.
+            setTimeout(() => setWelcomeTourOpen(true), 150);
+          }}
+        >
+          <ListItemIcon>
+            <ExploreIcon fontSize="small" />
+          </ListItemIcon>
+          Take the tour
         </MenuItem>
         <Divider />
         <MenuItem

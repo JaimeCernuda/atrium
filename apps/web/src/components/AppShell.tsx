@@ -19,6 +19,7 @@ import { can, unreadChannelTotal, useStore } from "../store";
 import { UserMenu } from "./UserMenu";
 import { ZulipLinkDialog } from "./ZulipLinkDialog";
 import { ChatPanel } from "./ChatPanel";
+import { WelcomeTour } from "./WelcomeTour";
 import { PingSnackbar } from "./PingSnackbar";
 import { AdminMenu } from "./AdminMenu";
 import { useZulipNotifications } from "../hooks/useZulipNotifications";
@@ -175,6 +176,13 @@ export function AppShell({ children }: Props) {
                 }
                 component={RouterLink}
                 to={t.path}
+                data-tour={
+                  t.path === "/zulip"
+                    ? "zulip-tab"
+                    : t.path === "/digest"
+                      ? "digest-tab"
+                      : undefined
+                }
                 sx={{ minHeight: 40, py: 0.5 }}
               />
             ))}
@@ -191,6 +199,7 @@ export function AppShell({ children }: Props) {
                 <IconButton
                   onClick={() => setChatOpen(true)}
                   aria-label="Open chat"
+                  data-tour="chat-button"
                   size="small"
                 >
                   <Badge
@@ -216,6 +225,9 @@ export function AppShell({ children }: Props) {
       {/* Mounted at the root so "Connect Zulip" opens from anywhere (avatar menu OR
           the unlinked Zulip/DM tab), not just while the avatar menu is open. */}
       <ZulipLinkDialog />
+      {/* First-run guided tour; overlays every authed page. Auto-starts once,
+          re-triggerable from the avatar menu. */}
+      <WelcomeTour />
     </Box>
   );
 }
