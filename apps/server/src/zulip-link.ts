@@ -86,9 +86,22 @@ export async function registerZulipLink(app: FastifyInstance, config: Config): P
       if (!user) return reply;
 
       const uploadPath = (req.query?.path ?? "").trim();
-      // Strict allowlist: must be a rooted /user_uploads/ path. Reject absolute
-      // URLs, other endpoints, and any "../" traversal.
-      if (!uploadPath.startsWith("/user_uploads/") || uploadPath.includes("..")) {
+      // Strict allowlist: must resolve to a rooted /user_uploads/ path on the grc
+      // realm. We validate the NORMALIZED URL, not the raw string — parsing first
+      // applies the same %2e/.. decoding that fetch (undici/WHATWG URL) would,
+      // so percent-encoded traversal like /user_uploads/%2e%2e/api/v1/users
+      // collapses to /api/v1/users and is rejected here. Reject absolute URLs,
+      // other endpoints, and any traversal that escapes /user_uploads/.
+      let target: URL;
+      try {
+        target = new URL(uploadPath, ZULIP_REALM);
+      } catch {
+        return reply.code(403).send({ error: "Only /user_uploads/ paths are allowed." });
+      }
+      if (
+        target.origin !== ZULIP_REALM ||
+        !target.pathname.startsWith("/user_uploads/")
+      ) {
         return reply.code(403).send({ error: "Only /user_uploads/ paths are allowed." });
       }
 
@@ -109,8 +122,9 @@ export async function registerZulipLink(app: FastifyInstance, config: Config): P
 
       let upstream: Response;
       try {
-        upstream = await fetch(`${ZULIP_REALM}${uploadPath}`, {
+        upstream = await fetch(target, {
           headers: { Authorization: auth },
+          redirect: "manual",
         });
       } catch (err) {
         req.log.error(
