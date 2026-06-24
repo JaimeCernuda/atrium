@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Box, Button, Fade, Paper, Popper, Stack, Typography } from "@mui/material";
 import type { PopperPlacementType } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import { useStore } from "../store";
 
 // First-run guided tour. Lightweight custom coachmarks anchored to real DOM
@@ -28,6 +29,8 @@ interface TourStep {
    * closed again when the tour leaves the menu run.
    */
   requiresMenu?: boolean;
+  /** If set, navigate to this route when the step becomes active (e.g. open the digest). */
+  navigateTo?: string;
 }
 
 const STEPS: TourStep[] = [
@@ -107,8 +110,8 @@ const STEPS: TourStep[] = [
   },
   {
     selectors: ['[data-tour="menu-submissions"]'],
-    title: "Your submissions",
-    body: "Made a submission to the lab? You can find and review all of yours from here.",
+    title: "Your publications",
+    body: "Your accepted publications live here. Find and review all of yours from this menu.",
     placement: "left",
     requiresMenu: true,
   },
@@ -121,8 +124,9 @@ const STEPS: TourStep[] = [
   {
     selectors: ['[data-tour="digest-tab"]'],
     title: "Your daily digest",
-    body: "This is a tidy recap of what the lab got up to. A good first stop each morning.",
+    body: "A daily summary of HPC and research news, so the lab stays up to date. A good first stop each morning.",
     placement: "bottom",
+    navigateTo: "/digest",
   },
 ];
 
@@ -201,6 +205,7 @@ export function WelcomeTour() {
   const open = useStore((s) => s.welcomeTourOpen);
   const setOpen = useStore((s) => s.setWelcomeTourOpen);
   const setUserMenuOpen = useStore((s) => s.setUserMenuOpen);
+  const navigate = useNavigate();
 
   const [stepIndex, setStepIndex] = useState(0);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
@@ -239,6 +244,11 @@ export function WelcomeTour() {
     }
     setUserMenuOpen(!!step?.requiresMenu);
   }, [open, step?.requiresMenu, setUserMenuOpen]);
+
+  // Some steps open a route so the reader sees the real thing (e.g. the digest).
+  useEffect(() => {
+    if (open && step?.navigateTo) navigate(step.navigateTo);
+  }, [open, step?.navigateTo, navigate]);
 
   const measure = useCallback((el: HTMLElement | null) => {
     setAnchorEl(el);
