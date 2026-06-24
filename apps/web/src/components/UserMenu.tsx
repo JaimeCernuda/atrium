@@ -25,6 +25,7 @@ import { useNavigate } from "react-router-dom";
 import type { User } from "@atrium/shared";
 import { useStore } from "../store";
 import { AvatarCropper } from "./AvatarCropper";
+import { ZulipLinkDialog } from "./ZulipLinkDialog";
 
 export function UserMenu() {
   const user = useStore((s) => s.user);
@@ -155,6 +156,9 @@ export function UserMenu() {
           </ListItemIcon>
           My submissions
         </MenuItem>
+        <Divider />
+        <ZulipLinkDialog />
+        <Divider />
         <MenuItem onClick={logout}>
           <ListItemIcon>
             <LogoutIcon fontSize="small" />

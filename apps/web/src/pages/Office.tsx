@@ -37,8 +37,6 @@ export function Office() {
   const currentRoomId = useStore((s) => s.currentRoomId);
   const setCurrentRoomId = useStore((s) => s.setCurrentRoomId);
   const openDmWith = useStore((s) => s.openDmWith);
-  const setChatOpen = useStore((s) => s.setChatOpen);
-  const setChatView = useStore((s) => s.setChatView);
   const setZulipActiveChannel = useStore((s) => s.setZulipActiveChannel);
   const navigate = useNavigate();
   useNotifications();
@@ -52,9 +50,8 @@ export function Office() {
     // chat drawer on the Zulip tab focused on that channel (topic unselected).
     const room = rooms.find((r) => r.id === roomId);
     if (room?.zulipStreamId != null) {
-      setChatView("zulip");
       setZulipActiveChannel(room.zulipStreamId, null);
-      setChatOpen(true);
+      navigate("/zulip");
     }
   };
 
@@ -70,8 +67,7 @@ export function Office() {
       );
       if (zu) {
         s.setZulipActiveDmParticipants([s.zulipSelfId, zu.zulipUserId]);
-        s.setChatView("zulip-dm");
-        s.setChatOpen(true);
+        navigate("/zulip?pane=dms");
         return;
       }
       s.setZulipError("That person isn't in the Zulip org yet.");

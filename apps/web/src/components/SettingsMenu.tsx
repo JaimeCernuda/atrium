@@ -19,7 +19,6 @@ import ForumIcon from "@mui/icons-material/Forum";
 import { useStore } from "../store";
 import { requestPermission, supportsNotifications } from "../notify";
 import type { ThemeMode } from "../prefs";
-import { ZulipLinkDialog } from "./ZulipLinkDialog";
 
 export function SettingsMenu() {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -113,10 +112,6 @@ export function SettingsMenu() {
           />
           <Switch checked={globalChatSoundEnabled} />
         </MenuItem>
-
-        <Divider />
-
-        <ZulipLinkDialog />
       </Menu>
     </>
   );

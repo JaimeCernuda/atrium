@@ -21,8 +21,8 @@ import { useStore } from "../store";
 const ZULIP_KEY_HELP = "https://grc.zulipchat.com/#settings/account-and-privacy";
 
 /**
- * "Connect Zulip" flow. Mounted as a menu item in SettingsMenu. Sends the
- * pasted API key to POST /api/zulip/link, which validates and stores it
+ * "Connect Zulip" flow. Mounted as a menu item in the user/avatar menu. Sends
+ * the pasted API key to POST /api/zulip/link, which validates and stores it
  * encrypted. The key never persists in the browser.
  */
 export function ZulipLinkDialog() {

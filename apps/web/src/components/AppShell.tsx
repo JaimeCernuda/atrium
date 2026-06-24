@@ -28,12 +28,14 @@ const TABS: Array<{ label: string; path: string; permission?: PermissionKey }> =
   { label: "Office", path: "/" },
   { label: "Digest", path: "/digest" },
   { label: "Reminders", path: "/reminders" },
+  { label: "Zulip", path: "/zulip" },
 ];
 
 function matchTab(pathname: string): string {
   if (pathname === "/") return "/";
   if (pathname.startsWith("/digest")) return "/digest";
   if (pathname.startsWith("/reminders")) return "/reminders";
+  if (pathname.startsWith("/zulip")) return "/zulip";
   return "";
 }
 

@@ -22,6 +22,7 @@ import { AdminMembers } from "./pages/AdminMembers";
 import { DigestList } from "./pages/Digest/List";
 import { DigestDay } from "./pages/Digest/Day";
 import { Reminders } from "./pages/Reminders";
+import { Zulip } from "./pages/Zulip";
 import { Submit } from "./pages/Submit";
 import { SubmitEdit } from "./pages/SubmitEdit";
 import { AdminSubmissions } from "./pages/AdminSubmissions";
@@ -103,6 +104,7 @@ export function App() {
                 <Route path="/" element={<Office />} />
                 <Route path="/digest" element={<DigestList />} />
                 <Route path="/reminders" element={<Reminders />} />
+                <Route path="/zulip" element={<Zulip />} />
                 {can(user, "submit") && <Route path="/submit" element={<Submit />} />}
                 {can(user, "submit") && <Route path="/submit/edit/:id" element={<SubmitEdit />} />}
                 <Route
