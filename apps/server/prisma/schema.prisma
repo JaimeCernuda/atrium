@@ -177,5 +177,7 @@ model Settings {
   id                   String   @id @default("singleton")
   globalZulipChannelId Int?
   globalZulipTopicName String?
+  userGroupFeatured    String?
+  userGroupSecondary   String?
   updatedAt            DateTime @updatedAt
 }

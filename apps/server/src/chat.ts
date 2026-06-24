@@ -1,6 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ChatMessage, GlobalChatConfig, User } from "@atrium/shared";
-import { getGlobalChatConfig, prisma, setGlobalChatConfig } from "./db.js";
+import {
+  getGlobalChatConfig,
+  getUserGroupPolicy,
+  prisma,
+  setGlobalChatConfig,
+  setUserGroupPolicy,
+} from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
 import { requirePermission } from "./permissions.js";
@@ -136,6 +142,35 @@ export async function registerChat(
     await setGlobalChatConfig(channelId, topicName);
     return await getGlobalChatConfig();
   });
+
+  // ───── Admin: Zulip user-group visibility policy ─────
+  app.get("/api/admin/user-group-policy", async (req, reply) => {
+    const me = await user(req, reply);
+    if (!me) return reply;
+    const policy = await getUserGroupPolicy();
+    const client = zulipRef.current?.get(me.id);
+    if (!client) return { policy, allGroups: [] };
+    try {
+      return { policy, allGroups: await client.fetchUserGroups() };
+    } catch {
+      return { policy, allGroups: [] };
+    }
+  });
+
+  app.patch<{ Body: { featured?: number[]; secondary?: number[] } }>(
+    "/api/admin/user-group-policy",
+    async (req, reply) => {
+      if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName)))
+        return reply;
+      const featured = Array.isArray(req.body?.featured)
+        ? req.body!.featured.filter((n) => Number.isInteger(n))
+        : [];
+      const secondary = Array.isArray(req.body?.secondary)
+        ? req.body!.secondary.filter((n) => Number.isInteger(n))
+        : [];
+      return { policy: await setUserGroupPolicy(featured, secondary) };
+    },
+  );
 
   app.get<{ Params: { userId: string }; Querystring: { before?: string; limit?: string } }>(
     "/api/chat/dm/:userId",

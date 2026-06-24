@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Box,
@@ -38,12 +38,27 @@ export function ZulipLinkDialog() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const dialogOpen = useStore((s) => s.zulipLinkDialogOpen);
+  const setDialogOpen = useStore((s) => s.setZulipLinkDialogOpen);
+
   const openDialog = () => {
     setApiKey("");
     setEmail(zulipEmail ?? me?.email ?? "");
     setError(null);
     setOpen(true);
   };
+
+  const closeDialog = () => {
+    setOpen(false);
+    setDialogOpen(false);
+  };
+
+  // Allow other surfaces (e.g. the unlinked DM fallback) to open this dialog
+  // through the store without prop-drilling.
+  useEffect(() => {
+    if (dialogOpen) openDialog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen]);
 
   const submit = async () => {
     setError(null);
@@ -63,7 +78,7 @@ export function ZulipLinkDialog() {
       const status = (await res.json()) as ZulipLinkStatus;
       setZulipStatus({ linked: status.linked, zulipEmail: status.zulipEmail });
       setApiKey("");
-      setOpen(false);
+      closeDialog();
     } catch {
       setError("Connecting Zulip failed. Check the connection and try again.");
     } finally {
@@ -76,7 +91,7 @@ export function ZulipLinkDialog() {
     try {
       await fetch("/api/zulip/link", { method: "DELETE", credentials: "include" });
       setZulipStatus({ linked: false, zulipEmail: null });
-      setOpen(false);
+      closeDialog();
     } finally {
       setLinking(false);
     }
@@ -95,7 +110,7 @@ export function ZulipLinkDialog() {
         />
       </MenuItem>
 
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog open={open} onClose={closeDialog} maxWidth="sm" fullWidth>
         <DialogTitle>{linked ? "Zulip connection" : "Connect Zulip"}</DialogTitle>
         <DialogContent>
           {linked ? (
@@ -147,14 +162,14 @@ export function ZulipLinkDialog() {
         <DialogActions>
           {linked ? (
             <>
-              <Button onClick={() => setOpen(false)}>Close</Button>
+              <Button onClick={closeDialog}>Close</Button>
               <Button color="error" onClick={disconnect} disabled={linking}>
                 Disconnect
               </Button>
             </>
           ) : (
             <>
-              <Button onClick={() => setOpen(false)}>Cancel</Button>
+              <Button onClick={closeDialog}>Cancel</Button>
               <Button
                 variant="contained"
                 onClick={submit}

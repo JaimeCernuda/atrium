@@ -206,6 +206,12 @@ export function createPresenceServer(
           atriumUserId: byEmail.get(u.email.toLowerCase()) ?? null,
         }));
         socket.emit("zulip:users", { users: enriched });
+        try {
+          const groups = await client.fetchUserGroups();
+          socket.emit("zulip:user-groups", { groups });
+        } catch {
+          // Groups are non-fatal; the DM list falls back to a flat people list.
+        }
         cb?.(null, enriched);
       } catch (err) {
         cb?.(err instanceof Error ? err.message : "fetch-users failed");

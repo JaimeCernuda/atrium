@@ -4,10 +4,13 @@ import {
   Box,
   Button,
   Chip,
+  Collapse,
   Drawer,
   IconButton,
+  InputAdornment,
   List,
   ListItemButton,
+  ListSubheader,
   Stack,
   Tab,
   Tabs,
@@ -19,6 +22,9 @@ import SendIcon from "@mui/icons-material/Send";
 import CloseIcon from "@mui/icons-material/Close";
 import AddIcon from "@mui/icons-material/Add";
 import TagIcon from "@mui/icons-material/Tag";
+import SearchIcon from "@mui/icons-material/Search";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import {
   Checkbox,
   Dialog,
@@ -29,11 +35,14 @@ import {
   ListItemText,
 } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import type { ChatMessage, User, ZulipUser } from "@atrium/shared";
+import type { ChatMessage, User, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { participantKey } from "@atrium/shared";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
 import { UserSearchDialog } from "./UserSearchDialog";
+import { UnlinkedZulipFallback } from "./UnlinkedZulipFallback";
+
+const openZulip = () => window.open("https://grc.zulipchat.com", "_blank", "noopener");
 
 const DRAWER_WIDTH = 360;
 
@@ -319,12 +328,10 @@ function ZulipChannelView({ meId }: { meId: string }) {
 
   if (!linked) {
     return (
-      <Box sx={{ p: 3 }}>
-        <Typography variant="body2" color="text.secondary">
-          Zulip is not connected yet. Open <strong>Settings</strong> and choose{" "}
-          <strong>Connect Zulip</strong> to bring your channels into Atrium.
-        </Typography>
-      </Box>
+      <UnlinkedZulipFallback
+        onConnect={() => useStore.getState().setZulipLinkDialogOpen(true)}
+        onOpenZulip={openZulip}
+      />
     );
   }
 
@@ -451,16 +458,93 @@ function ZulipChannelView({ meId }: { meId: string }) {
   );
 }
 
+type DmTier = "featured" | "secondary" | "others";
+
+interface DmBucket {
+  id: string; // group id as string, or "others"
+  name: string;
+  tier: DmTier;
+  users: ZulipUser[];
+}
+
+/**
+ * Partition people into collapsible sections by Zulip user group, honoring the
+ * admin policy. A person appears once, under their highest-priority group
+ * (featured > secondary). People in no listed group land in "Others". When the
+ * policy or groups are missing, returns a single flat "People" bucket.
+ */
+function buildBuckets(
+  users: ZulipUser[],
+  groups: ZulipUserGroup[],
+  policy: { featured: number[]; secondary: number[] } | null,
+  selfId: number | null,
+): DmBucket[] {
+  const people = users.filter((u) => u.zulipUserId !== selfId);
+  if (!policy || groups.length === 0) {
+    return [{ id: "others", name: "People", tier: "others", users: people }];
+  }
+  const groupsById = new Map(groups.map((g) => [g.id, g]));
+  // Ordered list of (tier, groupId) by priority: featured first, then secondary.
+  const ordered: Array<{ tier: DmTier; group: ZulipUserGroup }> = [];
+  for (const gid of policy.featured) {
+    const g = groupsById.get(gid);
+    if (g) ordered.push({ tier: "featured", group: g });
+  }
+  for (const gid of policy.secondary) {
+    if (policy.featured.includes(gid)) continue;
+    const g = groupsById.get(gid);
+    if (g) ordered.push({ tier: "secondary", group: g });
+  }
+
+  const assigned = new Set<number>();
+  const buckets: DmBucket[] = ordered.map(({ tier, group }) => {
+    const members: ZulipUser[] = [];
+    for (const u of people) {
+      if (assigned.has(u.zulipUserId)) continue;
+      if (group.memberIds.includes(u.zulipUserId)) {
+        members.push(u);
+        assigned.add(u.zulipUserId);
+      }
+    }
+    return { id: String(group.id), name: group.name, tier, users: members };
+  });
+
+  const others = people.filter((u) => !assigned.has(u.zulipUserId));
+  if (others.length > 0) {
+    buckets.push({ id: "others", name: "Others", tier: "others", users: others });
+  }
+  return buckets.filter((b) => b.users.length > 0);
+}
+
+/** Filter every bucket's people by a free-text query (name or email). */
+function filterBucketsBySearch(buckets: DmBucket[], query: string): DmBucket[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return buckets;
+  return buckets
+    .map((b) => ({
+      ...b,
+      users: b.users.filter(
+        (u) => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+      ),
+    }))
+    .filter((b) => b.users.length > 0);
+}
+
 function ZulipDmView() {
   const me = useStore((s) => s.user);
   const selfId = useStore((s) => s.zulipSelfId);
   const connected = useStore((s) => s.zulipConnected);
+  const linked = useStore((s) => s.zulipLinked);
   const users = useStore((s) => s.zulipUsers);
+  const groups = useStore((s) => s.zulipUserGroups);
+  const policy = useStore((s) => s.zulipUserGroupPolicy);
   const dmsByParticipants = useStore((s) => s.zulipDmsByParticipants);
   const activeParticipants = useStore((s) => s.zulipActiveDmParticipants);
   const setActiveParticipants = useStore((s) => s.setZulipActiveDmParticipants);
   const setDmMessages = useStore((s) => s.setZulipDmMessages);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const usersById = new Map(users.map((u) => [u.zulipUserId, u]));
   const activeKey = activeParticipants ? participantKey(activeParticipants) : null;
@@ -482,6 +566,15 @@ function ZulipDmView() {
     if (!activeParticipants) return;
     getSocket().emit("zulip:send-dm", { participantIds: activeParticipants, body });
   };
+
+  if (!linked) {
+    return (
+      <UnlinkedZulipFallback
+        onConnect={() => useStore.getState().setZulipLinkDialogOpen(true)}
+        onOpenZulip={openZulip}
+      />
+    );
+  }
 
   // An active conversation: header + messages + composer.
   if (activeParticipants && activeKey != null) {
@@ -505,10 +598,63 @@ function ZulipDmView() {
     );
   }
 
-  // No conversation open: list people + a "New message" action for group DMs.
+  // No conversation open: grouped, collapsible people list + a "New message"
+  // action for group DMs. Search matches across everyone.
+  const allBuckets = buildBuckets(users, groups, policy, selfId);
+  const searching = searchText.trim().length > 0;
+  const buckets = searching ? filterBucketsBySearch(allBuckets, searchText) : allBuckets;
+
+  // Default expansion: featured expanded; secondary + others collapsed. While
+  // searching, every matching bucket is force-expanded.
+  const isOpen = (b: DmBucket): boolean => {
+    if (searching) return true;
+    if (b.id in collapsed) return !collapsed[b.id];
+    return b.tier === "featured";
+  };
+  const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !(c[id] ?? false) }));
+
+  const renderUser = (u: ZulipUser) => (
+    <ListItemButton
+      key={u.zulipUserId}
+      sx={{ pl: 3 }}
+      onClick={() =>
+        setActiveParticipants(selfId != null ? [selfId, u.zulipUserId] : [u.zulipUserId])
+      }
+    >
+      <Avatar src={u.imageUrl} sx={{ width: 32, height: 32, mr: 1 }}>
+        {u.name.charAt(0)}
+      </Avatar>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="body2">{u.name}</Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {u.email}
+        </Typography>
+      </Box>
+    </ListItemButton>
+  );
+
   return (
     <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
       <Box sx={{ p: 1.5 }}>
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Search people"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          sx={{ mb: 1 }}
+          InputProps={{
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
+          }}
+        />
         <Button
           fullWidth
           variant="outlined"
@@ -524,30 +670,44 @@ function ZulipDmView() {
             No people loaded yet.
           </Typography>
         </Box>
+      ) : buckets.length === 0 ? (
+        <Box sx={{ px: 2, pb: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            No people match &ldquo;{searchText}&rdquo;.
+          </Typography>
+        </Box>
       ) : (
         <List dense>
-          {users
-            .filter((u) => u.zulipUserId !== selfId)
-            .map((u) => (
-              <ListItemButton
-                key={u.zulipUserId}
-                onClick={() => setActiveParticipants(selfId != null ? [selfId, u.zulipUserId] : [u.zulipUserId])}
-              >
-                <Avatar src={u.imageUrl} sx={{ width: 32, height: 32, mr: 1 }}>
-                  {u.name.charAt(0)}
-                </Avatar>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2">{u.name}</Typography>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  >
-                    {u.email}
-                  </Typography>
-                </Box>
-              </ListItemButton>
-            ))}
+          {buckets.map((b) => {
+            const open = isOpen(b);
+            return (
+              <Box key={b.id}>
+                <ListSubheader
+                  disableSticky
+                  component="div"
+                  onClick={() => toggle(b.id)}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    cursor: "pointer",
+                    lineHeight: "32px",
+                    userSelect: "none",
+                  }}
+                >
+                  {open ? (
+                    <ExpandMoreIcon fontSize="small" sx={{ mr: 0.5 }} />
+                  ) : (
+                    <ChevronRightIcon fontSize="small" sx={{ mr: 0.5 }} />
+                  )}
+                  {b.name}
+                  <Chip label={b.users.length} size="small" sx={{ ml: 1, height: 18 }} />
+                </ListSubheader>
+                <Collapse in={open} timeout="auto" unmountOnExit>
+                  {b.users.map(renderUser)}
+                </Collapse>
+              </Box>
+            );
+          })}
         </List>
       )}
       <NewGroupDmDialog

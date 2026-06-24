@@ -134,6 +134,18 @@ export function useBootstrap(): { loading: boolean } {
             if (msgs) useStore.getState().setGlobalMessages(msgs);
           })
           .catch((err) => console.error(err));
+        // Load the org's user-group visibility policy so the DM list renders the
+        // configured grouping on first paint (readable by any authed user).
+        fetch("/api/admin/user-group-policy", { credentials: "include" })
+          .then((r) =>
+            r.ok
+              ? (r.json() as Promise<{ policy: { featured: number[]; secondary: number[] } }>)
+              : null,
+          )
+          .then((data) => {
+            if (data?.policy) useStore.getState().setZulipUserGroupPolicy(data.policy);
+          })
+          .catch((err) => console.error(err));
       });
       socket.on("zulip:disconnected", () => useStore.getState().setZulipConnected(false));
       socket.on("zulip:error", ({ message }) => useStore.getState().setZulipError(message));
@@ -153,6 +165,9 @@ export function useBootstrap(): { loading: boolean } {
         }
       });
       socket.on("zulip:users", ({ users }) => useStore.getState().setZulipUsers(users));
+      socket.on("zulip:user-groups", ({ groups }) =>
+        useStore.getState().setZulipUserGroups(groups),
+      );
       socket.on("zulip:dm", ({ participantKey, message }) =>
         useStore.getState().appendZulipDmMessage(participantKey, message),
       );

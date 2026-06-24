@@ -9,6 +9,7 @@ import type {
   ZulipChannel,
   ZulipTopic,
   ZulipUser,
+  ZulipUserGroup,
 } from "@atrium/shared";
 import { loadPrefs, savePrefs, type ThemeMode, type UserPrefs } from "./prefs";
 
@@ -87,6 +88,14 @@ interface AtriumState {
   appendZulipDmMessage: (key: string, msg: ChatMessage) => void;
   zulipActiveDmParticipants: number[] | null; // full set incl. self
   setZulipActiveDmParticipants: (ids: number[] | null) => void;
+  zulipUserGroups: ZulipUserGroup[];
+  setZulipUserGroups: (groups: ZulipUserGroup[]) => void;
+  zulipUserGroupPolicy: { featured: number[]; secondary: number[] } | null;
+  setZulipUserGroupPolicy: (
+    policy: { featured: number[]; secondary: number[] } | null,
+  ) => void;
+  zulipLinkDialogOpen: boolean;
+  setZulipLinkDialogOpen: (open: boolean) => void;
 
   // ── Global -> Zulip channel+topic mapping ──
   globalZulipChannelId: number | null;
@@ -250,6 +259,12 @@ export const useStore = create<AtriumState>((set) => ({
   zulipActiveDmParticipants: null,
   setZulipActiveDmParticipants: (zulipActiveDmParticipants) =>
     set({ zulipActiveDmParticipants }),
+  zulipUserGroups: [],
+  setZulipUserGroups: (zulipUserGroups) => set({ zulipUserGroups }),
+  zulipUserGroupPolicy: null,
+  setZulipUserGroupPolicy: (zulipUserGroupPolicy) => set({ zulipUserGroupPolicy }),
+  zulipLinkDialogOpen: false,
+  setZulipLinkDialogOpen: (zulipLinkDialogOpen) => set({ zulipLinkDialogOpen }),
 
   globalZulipChannelId: null,
   globalZulipTopicName: null,

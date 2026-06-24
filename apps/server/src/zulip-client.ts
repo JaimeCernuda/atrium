@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { ChatMessage, ZulipChannel, ZulipTopic, ZulipUser } from "@atrium/shared";
+import type { ChatMessage, ZulipChannel, ZulipTopic, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { participantKey } from "@atrium/shared";
 
 // Fixed Zulip Cloud realm for the Gnosis Research Center org.
@@ -284,6 +284,27 @@ export class ZulipQueueClient extends EventEmitter {
         name: m.full_name,
         email: m.email,
         imageUrl: m.avatar_url ?? undefined,
+      }));
+  }
+
+  /** Custom Zulip user groups (system "role:*" groups excluded). */
+  async fetchUserGroups(): Promise<ZulipUserGroup[]> {
+    const res = (await this.request("/user_groups")) as {
+      user_groups: Array<{
+        id: number;
+        name: string;
+        description: string;
+        members: number[];
+        is_system_group?: boolean;
+      }>;
+    };
+    return res.user_groups
+      .filter((g) => !g.is_system_group && !/^role:/i.test(g.name))
+      .map((g) => ({
+        id: g.id,
+        name: g.name,
+        description: g.description ?? "",
+        memberIds: g.members ?? [],
       }));
   }
 

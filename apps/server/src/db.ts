@@ -120,6 +120,48 @@ export async function setGlobalChatConfig(
   });
 }
 
+// ───── Zulip user-group visibility policy (org-wide singleton) ─────
+//
+// "featured" groups are shown expanded, "secondary" collapsed; every group not
+// listed in either is implicitly "hidden" (reachable only via search). Each
+// column stores a JSON array of Zulip user-group ids.
+
+export interface UserGroupPolicy {
+  featured: number[];
+  secondary: number[];
+}
+
+const DEFAULT_USER_GROUP_POLICY: UserGroupPolicy = {
+  featured: [301997, 316940, 1545694],
+  secondary: [301998, 1453788],
+};
+
+export async function getUserGroupPolicy(): Promise<UserGroupPolicy> {
+  const row = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  return {
+    featured: row?.userGroupFeatured
+      ? (JSON.parse(row.userGroupFeatured) as number[])
+      : DEFAULT_USER_GROUP_POLICY.featured,
+    secondary: row?.userGroupSecondary
+      ? (JSON.parse(row.userGroupSecondary) as number[])
+      : DEFAULT_USER_GROUP_POLICY.secondary,
+  };
+}
+
+export async function setUserGroupPolicy(
+  featured: number[],
+  secondary: number[],
+): Promise<UserGroupPolicy> {
+  const f = JSON.stringify(featured);
+  const s = JSON.stringify(secondary);
+  await prisma.settings.upsert({
+    where: { id: "singleton" },
+    update: { userGroupFeatured: f, userGroupSecondary: s },
+    create: { id: "singleton", userGroupFeatured: f, userGroupSecondary: s },
+  });
+  return { featured, secondary };
+}
+
 /** Mark a user as seen now (called on socket connect, not just OAuth login). */
 export async function touchLastSeen(userId: string): Promise<void> {
   await prisma.user.update({

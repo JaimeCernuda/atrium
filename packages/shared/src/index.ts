@@ -254,6 +254,14 @@ export interface ZulipUser {
   imageUrl?: string;
 }
 
+/** A custom Zulip user group (system "role:*" groups are excluded server-side). */
+export interface ZulipUserGroup {
+  id: number;
+  name: string;
+  description: string;
+  memberIds: number[];
+}
+
 /** Org-wide mapping of the Atrium "Global" chat onto one Zulip channel+topic. */
 export interface GlobalChatConfig {
   channelId: number | null;
@@ -309,6 +317,7 @@ export type ServerToClientEvents = {
   "zulip:message": (payload: ZulipMessagePayload) => void;
   "zulip:reaction": (payload: ZulipReactionPayload) => void;
   "zulip:users": (payload: { users: ZulipUser[] }) => void;
+  "zulip:user-groups": (payload: { groups: ZulipUserGroup[] }) => void;
   "zulip:dm": (payload: {
     participantKey: string;
     participantIds: number[];
