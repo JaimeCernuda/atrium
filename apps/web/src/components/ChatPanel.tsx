@@ -18,6 +18,7 @@ import type { ChatMessage, User } from "@atrium/shared";
 import { useStore } from "../store";
 import { UserSearchDialog } from "./UserSearchDialog";
 import { MessageList, Composer } from "./zulip/chatPrimitives";
+import { ZulipDmView } from "./zulip/ZulipDmView";
 
 const DRAWER_WIDTH = 360;
 
@@ -39,6 +40,7 @@ export function ChatPanel() {
   const [searchOpen, setSearchOpen] = useState(false);
   const me = useStore((s) => s.user);
   const zulipLinked = useStore((s) => s.zulipLinked);
+  const zulipUsers = useStore((s) => s.zulipUsers);
   const zulipSelfId = useStore((s) => s.zulipSelfId);
   const globalZulipChannelId = useStore((s) => s.globalZulipChannelId);
   const globalZulipTopicName = useStore((s) => s.globalZulipTopicName);
@@ -138,7 +140,9 @@ export function ChatPanel() {
         <Tab value="dm" label="DMs" />
       </Tabs>
 
-      {drawerTab === "dm" && !activeDmUser ? (
+      {drawerTab === "dm" && zulipLinked && zulipUsers.length > 0 ? (
+        <ZulipDmView />
+      ) : drawerTab === "dm" && !activeDmUser ? (
         <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
           <Box sx={{ p: 1.5 }}>
             <Button

@@ -251,7 +251,7 @@ export class ZulipQueueClient extends EventEmitter {
       num_before: String(numBefore),
       num_after: "0",
       narrow,
-      apply_markdown: "false",
+      apply_markdown: "true",
     });
     const res = (await this.request(`/messages?${params.toString()}`)) as {
       messages: ZulipRawMessage[];
@@ -345,7 +345,7 @@ export class ZulipQueueClient extends EventEmitter {
       num_before: String(numBefore),
       num_after: "0",
       narrow,
-      apply_markdown: "false",
+      apply_markdown: "true",
     });
     const res = (await this.request(`/messages?${params.toString()}`)) as {
       messages: ZulipRawMessage[];

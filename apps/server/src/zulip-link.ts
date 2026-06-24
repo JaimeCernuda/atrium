@@ -2,9 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { ZulipLinkStatus } from "@atrium/shared";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
-import { getZulipLink, linkZulipAccount, unlinkZulipAccount } from "./db.js";
-import { encryptZulipKey } from "./zulip-crypto.js";
-import { validateZulipKey } from "./zulip-client.js";
+import { getZulipKey, getZulipLink, linkZulipAccount, unlinkZulipAccount } from "./db.js";
+import { decryptZulipKey, encryptZulipKey } from "./zulip-crypto.js";
+import { validateZulipKey, ZULIP_REALM } from "./zulip-client.js";
 
 /**
  * Account-linking HTTP routes. The API key only ever travels over these
@@ -73,4 +73,64 @@ export async function registerZulipLink(app: FastifyInstance, config: Config): P
     await unlinkZulipAccount(user.id);
     return { ok: true };
   });
+
+  // Authenticated passthrough for Zulip /user_uploads/* (images & file links in
+  // message HTML). The browser can't fetch these directly — they need the user's
+  // own Zulip key. We decrypt THAT user's key server-side, fetch with Basic auth,
+  // and stream the bytes back. Locked to /user_uploads/* on the grc realm only:
+  // no open proxy, no SSRF, and a user only ever sees what their own key can.
+  app.get<{ Querystring: { path?: string } }>(
+    "/api/zulip/upload",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, cookieName);
+      if (!user) return reply;
+
+      const uploadPath = (req.query?.path ?? "").trim();
+      // Strict allowlist: must be a rooted /user_uploads/ path. Reject absolute
+      // URLs, other endpoints, and any "../" traversal.
+      if (!uploadPath.startsWith("/user_uploads/") || uploadPath.includes("..")) {
+        return reply.code(403).send({ error: "Only /user_uploads/ paths are allowed." });
+      }
+
+      const link = await getZulipKey(user.id);
+      if (!link) {
+        return reply.code(401).send({ error: "Zulip is not linked." });
+      }
+
+      let apiKey: string;
+      try {
+        apiKey = decryptZulipKey(link.zulipApiKeyEnc);
+      } catch {
+        return reply.code(401).send({ error: "Zulip key needs re-linking." });
+      }
+
+      const auth =
+        "Basic " + Buffer.from(`${link.zulipEmail}:${apiKey}`).toString("base64");
+
+      let upstream: Response;
+      try {
+        upstream = await fetch(`${ZULIP_REALM}${uploadPath}`, {
+          headers: { Authorization: auth },
+        });
+      } catch (err) {
+        req.log.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          "zulip upload proxy fetch failed",
+        );
+        return reply.code(502).send({ error: "Upstream Zulip fetch failed." });
+      }
+
+      if (!upstream.ok) {
+        return reply.code(upstream.status).send({ error: `Zulip returned ${upstream.status}.` });
+      }
+
+      const contentType = upstream.headers.get("content-type");
+      if (contentType) reply.type(contentType);
+      reply.header("Cache-Control", "private, immutable, max-age=86400");
+      reply.header("X-Content-Type-Options", "nosniff");
+
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      return reply.send(buffer);
+    },
+  );
 }

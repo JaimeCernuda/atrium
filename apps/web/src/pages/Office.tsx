@@ -66,8 +66,9 @@ export function Office() {
           u.email.toLowerCase() === target.email.toLowerCase(),
       );
       if (zu) {
+        s.setChatOpen(true);
+        s.setChatView("dm");
         s.setZulipActiveDmParticipants([s.zulipSelfId, zu.zulipUserId]);
-        navigate("/zulip?pane=dms");
         return;
       }
       s.setZulipError("That person isn't in the Zulip org yet.");
