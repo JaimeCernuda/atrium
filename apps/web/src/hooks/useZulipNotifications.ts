@@ -60,6 +60,20 @@ export function useZulipNotifications(): void {
       const focused =
         typeof document !== "undefined" && document.visibilityState === "visible";
 
+      // Track Global-mapped traffic separately for the aggregate header badge.
+      // Count it as unread unless the Global tab is open-and-focused.
+      const isGlobal =
+        state.globalZulipChannelId === channelId &&
+        state.globalZulipTopicName === topicName;
+      if (isGlobal) {
+        const globalOpen = state.chatOpen && state.chatView === "global";
+        if (globalOpen && focused) {
+          state.removeZulipUnreadGlobal();
+        } else {
+          state.addZulipUnreadGlobal();
+        }
+      }
+
       // The open-and-focused conversation needs no nudge.
       if (isActive && focused) {
         state.removeZulipUnreadTopic(key);
@@ -84,13 +98,29 @@ export function useZulipNotifications(): void {
 
     const onDm = ({
       participantKey: key,
+      participantIds,
+      title,
       message,
     }: {
       participantKey: string;
+      participantIds: number[];
+      title: string;
       message: ChatMessage;
     }) => {
       const state = useStore.getState();
       const self = selfTag();
+
+      // Bump this conversation to the top of the recent-DM list with the new
+      // message — for our OWN sends too, so the list reorders on every message.
+      // The server supplies the title so group-DM names never degrade.
+      state.updateZulipDmConversation({
+        conversationKey: key,
+        participantIds,
+        title,
+        lastMessage: message,
+        lastMessageTs: message.createdAt,
+      });
+
       // Same self-guard as channel messages: don't notify until we can reliably
       // distinguish our own outgoing DMs from incoming ones.
       if (self == null) return;

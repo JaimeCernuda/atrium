@@ -249,6 +249,21 @@ export function createPresenceServer(
       }
     });
 
+    socket.on("zulip:fetch-dm-conversations", async (cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      try {
+        const conversations = await client.fetchRecentDmConversations();
+        socket.emit("zulip:fetch-dm-conversations", { conversations });
+        cb?.(null, conversations);
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "fetch-dm-conversations failed");
+      }
+    });
+
     socket.on("presence:join", async (roomId) => {
       const check = await isRoomEnterableBy(roomId, user.email);
       if (!check.ok) {

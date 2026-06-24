@@ -29,10 +29,18 @@ export function ChatPanel() {
   const width = useStore((s) => s.chatPanelWidth);
   const setChatPanelWidth = useStore((s) => s.setChatPanelWidth);
   const unreadDms = useStore((s) => s.zulipUnreadDms);
+  const removeZulipUnreadGlobal = useStore((s) => s.removeZulipUnreadGlobal);
 
   const dmUnreadCount = Object.keys(unreadDms).length;
 
   const onClose = () => setChatOpen(false);
+
+  // Viewing the Global tab clears its unread count for the aggregate header
+  // badge. Runs when the drawer opens on Global and when the tab switches in.
+  const onGlobal = open && (tab === "dm" || tab === "zulip-dm" ? false : true);
+  useEffect(() => {
+    if (onGlobal) removeZulipUnreadGlobal();
+  }, [onGlobal, removeZulipUnreadGlobal]);
 
   // Drag the drawer's left edge to resize. We track the drag at the document
   // level so the pointer can leave the 6px handle without dropping the gesture,

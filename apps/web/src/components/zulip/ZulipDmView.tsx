@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Avatar,
   Box,
@@ -26,6 +26,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import GroupIcon from "@mui/icons-material/Group";
 import type { ChatMessage, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { participantKey } from "@atrium/shared";
 import { useStore } from "../../store";
@@ -105,12 +106,41 @@ function filterBucketsBySearch(buckets: DmBucket[], query: string): DmBucket[] {
     .filter((b) => b.users.length > 0);
 }
 
+// Plain-text preview of a (possibly HTML) message body for a conversation row.
+function snippet(body: string): string {
+  let text = body;
+  if (body.indexOf("<") !== -1 && typeof document !== "undefined") {
+    const div = document.createElement("div");
+    div.innerHTML = body;
+    text = div.textContent ?? "";
+  }
+  text = text.replace(/\s+/g, " ").trim();
+  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
+}
+
+// Relative time for a conversation row: "now", "5m", "3h", "Yesterday", or a date.
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const diff = Date.now() - then;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day === 1) return "Yesterday";
+  if (day < 7) return `${day}d`;
+  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
 /**
- * Unified Zulip DM surface: a user-group-grouped people list (featured-expanded,
- * secondary-collapsed, "Others" gated behind "Show everyone"), a group-DM "New
- * message" dialog, and the selected conversation's message stream + composer.
- * Shared store + zulip:* socket events keep it identical across the drawer and
- * the full-page client.
+ * Unified Zulip DM surface. The default (no open conversation) view is the
+ * reader's recent DM list — 1:1 and group, most-recent-first — with search and
+ * a "New message" action. Selecting a row opens that conversation's full
+ * history + composer. The group-organized people picker lives in the New
+ * message dialog. Shared store + zulip:* socket events keep it identical across
+ * the drawer and the full-page client.
  */
 export function ZulipDmView() {
   const me = useStore((s) => s.user);
@@ -128,16 +158,22 @@ export function ZulipDmView() {
   const reconcileDmMessageId = useStore((s) => s.reconcileZulipDmMessageId);
   const unreadDms = useStore((s) => s.zulipUnreadDms);
   const removeZulipUnreadDm = useStore((s) => s.removeZulipUnreadDm);
+  const conversations = useStore((s) => s.zulipDmConversations);
+  const setConversations = useStore((s) => s.setZulipDmConversations);
   const [composeOpen, setComposeOpen] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // "Others" (people outside any featured/secondary group) stays hidden until
-  // the reader asks to see everyone. Search ignores this gate (see below).
-  const [showEveryone, setShowEveryone] = useState(false);
 
-  const usersById = new Map(users.map((u) => [u.zulipUserId, u]));
+  const usersById = useMemo(() => new Map(users.map((u) => [u.zulipUserId, u])), [users]);
   const activeKey = activeParticipants ? participantKey(activeParticipants) : null;
+
+  // Pull the recent-DM list once linked + connected, and refresh on reconnect.
+  useEffect(() => {
+    if (!linked || !connected) return;
+    getSocket().emit("zulip:fetch-dm-conversations", (err, convos) => {
+      if (!err && convos) setConversations(convos);
+    });
+  }, [linked, connected, setConversations]);
 
   // Load history for the active conversation once.
   useEffect(() => {
@@ -234,70 +270,16 @@ export function ZulipDmView() {
     );
   }
 
-  // No conversation open: grouped, collapsible people list + a "New message"
-  // action for group DMs. Search matches across everyone.
-  const allBuckets = buildBuckets(users, groups, policy, selfId);
-  const searching = searchText.trim().length > 0;
-  // The "others" bucket (hidden-group members + ungrouped people) is gated
-  // behind "Show everyone" when not searching. Search reaches everyone, so
-  // while searching every matching bucket — others included — is shown.
-  const hasOthers = allBuckets.some((b) => b.tier === "others");
-  const groupedBuckets = allBuckets.filter((b) => b.tier !== "others");
-  // Gate "others" behind "Show everyone" ONLY when there are grouped buckets to
-  // show first. If nothing is grouped (policy/groups not loaded yet, or nobody
-  // matches a featured/secondary group), show everyone so the list is never
-  // mysteriously empty.
-  const othersHidden = !searching && !showEveryone && groupedBuckets.length > 0;
-  const visibleBuckets = othersHidden ? groupedBuckets : allBuckets;
-  const buckets = searching ? filterBucketsBySearch(visibleBuckets, searchText) : visibleBuckets;
-
-  // Default expansion: featured expanded; secondary + others collapsed. While
-  // searching, every matching bucket is force-expanded.
-  const isOpen = (b: DmBucket): boolean => {
-    if (searching) return true;
-    if (b.id in collapsed) return !collapsed[b.id];
-    // Featured is expanded by default; "others" expands when freshly revealed
-    // via "Show everyone"; secondary stays collapsed-but-visible.
-    return b.tier === "featured" || (b.tier === "others" && showEveryone);
-  };
-  const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !(c[id] ?? false) }));
-
-  const renderUser = (u: ZulipUser) => {
-    const dmKey = participantKey(
-      selfId != null ? [selfId, u.zulipUserId] : [u.zulipUserId],
-    );
-    const hasUnread = Boolean(unreadDms[dmKey]);
-    return (
-    <ListItemButton
-      key={u.zulipUserId}
-      sx={{ pl: 3 }}
-      onClick={() =>
-        setActiveParticipants(selfId != null ? [selfId, u.zulipUserId] : [u.zulipUserId])
-      }
-    >
-      <Avatar src={u.imageUrl} sx={{ width: 32, height: 32, mr: 1 }}>
-        {u.name.charAt(0)}
-      </Avatar>
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography variant="body2" sx={{ fontWeight: hasUnread ? 700 : 400 }}>
-          {u.name}
-        </Typography>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-        >
-          {u.email}
-        </Typography>
-      </Box>
-      {hasUnread && (
-        <Box
-          sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: "secondary.main", ml: 1, flexShrink: 0 }}
-        />
-      )}
-    </ListItemButton>
-    );
-  };
+  // No conversation open: the recent-DM list (1:1 + group), most-recent-first,
+  // with search and a "New message" action.
+  const q = searchText.trim().toLowerCase();
+  const visibleConversations = q
+    ? conversations.filter(
+        (c) =>
+          c.title.toLowerCase().includes(q) ||
+          snippet(c.lastMessage.body).toLowerCase().includes(q),
+      )
+    : conversations;
 
   return (
     <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto" }}>
@@ -305,7 +287,7 @@ export function ZulipDmView() {
         <TextField
           fullWidth
           size="small"
-          placeholder="Search people"
+          placeholder="Search conversations"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           sx={{ mb: 1 }}
@@ -326,72 +308,91 @@ export function ZulipDmView() {
           New message
         </Button>
       </Box>
-      {users.length === 0 ? (
+      {visibleConversations.length === 0 ? (
         <Box sx={{ px: 2, pb: 2 }}>
           <Typography variant="body2" color="text.secondary">
-            No people loaded yet.
-          </Typography>
-        </Box>
-      ) : buckets.length === 0 ? (
-        <Box sx={{ px: 2, pb: 2 }}>
-          <Typography variant="body2" color="text.secondary">
-            {searching ? <>No people match &ldquo;{searchText}&rdquo;.</> : "No people to show."}
+            {q ? (
+              <>No conversations match &ldquo;{searchText}&rdquo;.</>
+            ) : (
+              "No conversations yet. Start one with New message."
+            )}
           </Typography>
         </Box>
       ) : (
         <List dense>
-          {buckets.map((b) => {
-            const open = isOpen(b);
+          {visibleConversations.map((c) => {
+            const hasUnread = Boolean(unreadDms[c.conversationKey]);
+            const others = c.participantIds.filter((id) => id !== selfId);
+            const isGroup = others.length > 1;
+            const solo = others.length === 1 ? usersById.get(others[0]!) : undefined;
             return (
-              <Box key={b.id}>
-                <ListSubheader
-                  disableSticky
-                  component="div"
-                  onClick={() => toggle(b.id)}
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    cursor: "pointer",
-                    lineHeight: "32px",
-                    userSelect: "none",
-                  }}
-                >
-                  {open ? (
-                    <ExpandMoreIcon fontSize="small" sx={{ mr: 0.5 }} />
-                  ) : (
-                    <ChevronRightIcon fontSize="small" sx={{ mr: 0.5 }} />
-                  )}
-                  {b.name}
-                  <Chip label={b.users.length} size="small" sx={{ ml: 1, height: 18 }} />
-                </ListSubheader>
-                <Collapse in={open} timeout="auto" unmountOnExit>
-                  {b.users.map(renderUser)}
-                </Collapse>
-              </Box>
+              <ListItemButton
+                key={c.conversationKey}
+                onClick={() => setActiveParticipants(c.participantIds)}
+              >
+                {isGroup ? (
+                  <Avatar sx={{ width: 36, height: 36, mr: 1.5 }}>
+                    <GroupIcon fontSize="small" />
+                  </Avatar>
+                ) : (
+                  <Avatar src={solo?.imageUrl} sx={{ width: 36, height: 36, mr: 1.5 }}>
+                    {c.title.charAt(0)}
+                  </Avatar>
+                )}
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Stack direction="row" alignItems="baseline" spacing={1}>
+                    <Typography
+                      variant="body2"
+                      noWrap
+                      sx={{ fontWeight: hasUnread ? 700 : 500, flex: 1, minWidth: 0 }}
+                    >
+                      {c.title}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ flexShrink: 0 }}
+                    >
+                      {relativeTime(c.lastMessageTs)}
+                    </Typography>
+                  </Stack>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{
+                      display: "block",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontWeight: hasUnread ? 600 : 400,
+                    }}
+                  >
+                    {snippet(c.lastMessage.body)}
+                  </Typography>
+                </Box>
+                {hasUnread && (
+                  <Box
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      bgcolor: "secondary.main",
+                      ml: 1,
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
+              </ListItemButton>
             );
           })}
         </List>
       )}
-      {/* "Show everyone" toggle: only when there ARE grouped buckets hiding the
-          others bucket. If nothing is grouped, others is already shown, so no
-          toggle. Search surfaces everyone, so it's hidden while searching. */}
-      {!searching && hasOthers && groupedBuckets.length > 0 && (
-        <Box sx={{ px: 2, pb: 2, pt: 0.5 }}>
-          <Button
-            fullWidth
-            size="small"
-            variant="text"
-            startIcon={showEveryone ? <ExpandMoreIcon /> : <ChevronRightIcon />}
-            onClick={() => setShowEveryone((v) => !v)}
-            sx={{ justifyContent: "flex-start", color: "text.secondary" }}
-          >
-            {showEveryone ? "Hide everyone else" : "Show everyone"}
-          </Button>
-        </Box>
-      )}
       <NewGroupDmDialog
         open={composeOpen}
-        users={users.filter((u) => u.zulipUserId !== selfId)}
+        users={users}
+        groups={groups}
+        policy={policy}
+        selfId={selfId}
         onClose={() => setComposeOpen(false)}
         onStart={(ids) => {
           setComposeOpen(false);
@@ -402,47 +403,176 @@ export function ZulipDmView() {
   );
 }
 
+/**
+ * "New message" picker: the group-organized people list (featured-expanded,
+ * secondary-collapsed, "Others" gated behind "Show everyone"), with search and
+ * multi-select for group DMs. "Start chat" hands the selected ids back to open
+ * or create that conversation.
+ */
 function NewGroupDmDialog({
   open,
   users,
+  groups,
+  policy,
+  selfId,
   onClose,
   onStart,
 }: {
   open: boolean;
   users: ZulipUser[];
+  groups: ZulipUserGroup[];
+  policy: { featured: number[]; secondary: number[] } | null;
+  selfId: number | null;
   onClose: () => void;
   onStart: (ids: number[]) => void;
 }) {
   const [selected, setSelected] = useState<number[]>([]);
+  const [searchText, setSearchText] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [showEveryone, setShowEveryone] = useState(false);
 
   useEffect(() => {
-    if (!open) setSelected([]);
+    if (!open) {
+      setSelected([]);
+      setSearchText("");
+      setShowEveryone(false);
+      setCollapsed({});
+    }
   }, [open]);
 
   const toggle = (id: number) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
+  const allBuckets = buildBuckets(users, groups, policy, selfId);
+  const searching = searchText.trim().length > 0;
+  const hasOthers = allBuckets.some((b) => b.tier === "others");
+  const groupedBuckets = allBuckets.filter((b) => b.tier !== "others");
+  // Gate "others" behind "Show everyone" only when there are grouped buckets to
+  // show first. With nothing grouped, show everyone so the list is never empty.
+  const othersHidden = !searching && !showEveryone && groupedBuckets.length > 0;
+  const visibleBuckets = othersHidden ? groupedBuckets : allBuckets;
+  const buckets = searching ? filterBucketsBySearch(visibleBuckets, searchText) : visibleBuckets;
+
+  const isOpen = (b: DmBucket): boolean => {
+    if (searching) return true;
+    if (b.id in collapsed) return !collapsed[b.id];
+    return b.tier === "featured" || (b.tier === "others" && showEveryone);
+  };
+  const toggleBucket = (id: string) =>
+    setCollapsed((c) => ({ ...c, [id]: !(c[id] ?? false) }));
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>New message</DialogTitle>
       <DialogContent dividers sx={{ p: 0 }}>
-        <List dense>
-          {users.map((u) => (
-            <ListItemButton key={u.zulipUserId} onClick={() => toggle(u.zulipUserId)}>
-              <ListItemIcon sx={{ minWidth: 36 }}>
-                <Checkbox edge="start" checked={selected.includes(u.zulipUserId)} tabIndex={-1} disableRipple />
-              </ListItemIcon>
-              <Avatar src={u.imageUrl} sx={{ width: 28, height: 28, mr: 1 }}>
-                {u.name.charAt(0)}
-              </Avatar>
-              <ListItemText primary={u.name} secondary={u.email} />
-            </ListItemButton>
-          ))}
-        </List>
+        <Box sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
+          <TextField
+            fullWidth
+            size="small"
+            placeholder="Search people"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" />
+                </InputAdornment>
+              ),
+            }}
+          />
+        </Box>
+        {selected.length > 0 && (
+          <Typography variant="caption" color="text.secondary" sx={{ px: 2, pt: 1, display: "block" }}>
+            {selected.length} selected
+          </Typography>
+        )}
+        {users.length === 0 ? (
+          <Box sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              No people loaded yet.
+            </Typography>
+          </Box>
+        ) : buckets.length === 0 ? (
+          <Box sx={{ p: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {searching ? <>No people match &ldquo;{searchText}&rdquo;.</> : "No people to show."}
+            </Typography>
+          </Box>
+        ) : (
+          <List dense>
+            {buckets.map((b) => {
+              const expanded = isOpen(b);
+              return (
+                <Box key={b.id}>
+                  <ListSubheader
+                    disableSticky
+                    component="div"
+                    onClick={() => toggleBucket(b.id)}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      cursor: "pointer",
+                      lineHeight: "32px",
+                      userSelect: "none",
+                    }}
+                  >
+                    {expanded ? (
+                      <ExpandMoreIcon fontSize="small" sx={{ mr: 0.5 }} />
+                    ) : (
+                      <ChevronRightIcon fontSize="small" sx={{ mr: 0.5 }} />
+                    )}
+                    {b.name}
+                    <Chip label={b.users.length} size="small" sx={{ ml: 1, height: 18 }} />
+                  </ListSubheader>
+                  <Collapse in={expanded} timeout="auto" unmountOnExit>
+                    {b.users.map((u) => (
+                      <ListItemButton
+                        key={u.zulipUserId}
+                        sx={{ pl: 3 }}
+                        onClick={() => toggle(u.zulipUserId)}
+                      >
+                        <ListItemIcon sx={{ minWidth: 36 }}>
+                          <Checkbox
+                            edge="start"
+                            checked={selected.includes(u.zulipUserId)}
+                            tabIndex={-1}
+                            disableRipple
+                          />
+                        </ListItemIcon>
+                        <Avatar src={u.imageUrl} sx={{ width: 28, height: 28, mr: 1 }}>
+                          {u.name.charAt(0)}
+                        </Avatar>
+                        <ListItemText primary={u.name} secondary={u.email} />
+                      </ListItemButton>
+                    ))}
+                  </Collapse>
+                </Box>
+              );
+            })}
+          </List>
+        )}
+        {!searching && hasOthers && groupedBuckets.length > 0 && (
+          <Box sx={{ px: 2, pb: 1.5, pt: 0.5 }}>
+            <Button
+              fullWidth
+              size="small"
+              variant="text"
+              startIcon={showEveryone ? <ExpandMoreIcon /> : <ChevronRightIcon />}
+              onClick={() => setShowEveryone((v) => !v)}
+              sx={{ justifyContent: "flex-start", color: "text.secondary" }}
+            >
+              {showEveryone ? "Hide everyone else" : "Show everyone"}
+            </Button>
+          </Box>
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" disabled={selected.length === 0} onClick={() => onStart(selected)}>
+        <Button
+          variant="contained"
+          disabled={selected.length === 0}
+          onClick={() => onStart(selected)}
+        >
           Start chat
         </Button>
       </DialogActions>

@@ -269,6 +269,19 @@ export interface GlobalChatConfig {
 }
 
 /**
+ * One row in the user's recent direct-message list — a 1:1 or group DM,
+ * keyed by the full participant set. `title` is the other participants'
+ * names joined by ", "; the client renders this list most-recent-first.
+ */
+export interface ZulipDmConversation {
+  conversationKey: string; // participantKey(full participant set incl. self)
+  participantIds: number[]; // sorted numeric ids, including self
+  title: string; // "Alice" (1:1) or "Alice, Bob, Carol" (group)
+  lastMessage: ChatMessage;
+  lastMessageTs: string; // ISO timestamp of lastMessage
+}
+
+/**
  * Canonical key for a direct-message conversation: the FULL participant set
  * (including the current user), as sorted numeric Zulip ids joined by ",".
  * Load-bearing: server dispatch, server send-echo, and the web store must all
@@ -321,7 +334,11 @@ export type ServerToClientEvents = {
   "zulip:dm": (payload: {
     participantKey: string;
     participantIds: number[];
+    title: string;
     message: ChatMessage;
+  }) => void;
+  "zulip:fetch-dm-conversations": (payload: {
+    conversations: ZulipDmConversation[];
   }) => void;
 };
 
@@ -358,5 +375,8 @@ export type ClientToServerEvents = {
   "zulip:fetch-dm-history": (
     params: { participantIds: number[]; numBefore?: number },
     cb?: (err: string | null, messages?: ChatMessage[]) => void,
+  ) => void;
+  "zulip:fetch-dm-conversations": (
+    cb?: (err: string | null, conversations?: ZulipDmConversation[]) => void,
   ) => void;
 };

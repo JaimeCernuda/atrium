@@ -48,6 +48,10 @@ export function AppShell({ children }: Props) {
   const chatOpen = useStore((s) => s.chatOpen);
   const setChatOpen = useStore((s) => s.setChatOpen);
   const chatPanelWidth = useStore((s) => s.chatPanelWidth);
+  // Aggregate header badge: unread DM conversations + unread Global messages.
+  const unreadDmCount = useStore((s) => Object.keys(s.zulipUnreadDms).length);
+  const unreadGlobal = useStore((s) => s.zulipUnreadGlobal);
+  const totalUnread = unreadDmCount + unreadGlobal;
 
   // Browser notifications + sound + unread for live Zulip traffic, on every
   // authed page (this shell wraps them all; Login is outside it).
@@ -136,7 +140,11 @@ export function AppShell({ children }: Props) {
                   aria-label="Open chat"
                   size="small"
                 >
-                  <Badge color="secondary" variant="dot" invisible>
+                  <Badge
+                    color="secondary"
+                    badgeContent={totalUnread}
+                    invisible={totalUnread === 0}
+                  >
                     <ChatIcon />
                   </Badge>
                 </IconButton>

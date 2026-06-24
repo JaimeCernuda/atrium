@@ -7,6 +7,7 @@ import type {
   Room,
   User,
   ZulipChannel,
+  ZulipDmConversation,
   ZulipTopic,
   ZulipUser,
   ZulipUserGroup,
@@ -98,6 +99,11 @@ interface AtriumState {
   reconcileZulipDmMessageId: (key: string, fromId: string, toId: string) => void;
   zulipActiveDmParticipants: number[] | null; // full set incl. self
   setZulipActiveDmParticipants: (ids: number[] | null) => void;
+  // Recent DM conversations (1:1 + group), most-recent-first. Seeded by the
+  // fetch-dm-conversations round-trip; live zulip:dm bumps a row to the top.
+  zulipDmConversations: ZulipDmConversation[];
+  setZulipDmConversations: (conversations: ZulipDmConversation[]) => void;
+  updateZulipDmConversation: (conversation: ZulipDmConversation) => void;
   zulipUserGroups: ZulipUserGroup[];
   setZulipUserGroups: (groups: ZulipUserGroup[]) => void;
   zulipUserGroupPolicy: { featured: number[]; secondary: number[] } | null;
@@ -120,6 +126,10 @@ interface AtriumState {
   removeZulipUnreadTopic: (key: string) => void;
   addZulipUnreadDm: (key: string) => void;
   removeZulipUnreadDm: (key: string) => void;
+  // Count of unread Global-mapped messages while the Global tab isn't focused.
+  zulipUnreadGlobal: number;
+  addZulipUnreadGlobal: () => void;
+  removeZulipUnreadGlobal: () => void;
 
   // ── Resizable chat drawer width (px, persisted) ──
   chatPanelWidth: number;
@@ -297,6 +307,15 @@ export const useStore = create<AtriumState>((set) => ({
   zulipActiveDmParticipants: null,
   setZulipActiveDmParticipants: (zulipActiveDmParticipants) =>
     set({ zulipActiveDmParticipants }),
+  zulipDmConversations: [],
+  setZulipDmConversations: (zulipDmConversations) => set({ zulipDmConversations }),
+  updateZulipDmConversation: (updatedConv) =>
+    set((state) => {
+      const without = state.zulipDmConversations.filter(
+        (c) => c.conversationKey !== updatedConv.conversationKey,
+      );
+      return { zulipDmConversations: [updatedConv, ...without] };
+    }),
   zulipUserGroups: [],
   setZulipUserGroups: (zulipUserGroups) => set({ zulipUserGroups }),
   zulipUserGroupPolicy: null,
@@ -337,6 +356,12 @@ export const useStore = create<AtriumState>((set) => ({
       delete next[key];
       return { zulipUnreadDms: next };
     }),
+
+  zulipUnreadGlobal: 0,
+  addZulipUnreadGlobal: () =>
+    set((state) => ({ zulipUnreadGlobal: state.zulipUnreadGlobal + 1 })),
+  removeZulipUnreadGlobal: () =>
+    set((state) => (state.zulipUnreadGlobal === 0 ? state : { zulipUnreadGlobal: 0 })),
 
   chatPanelWidth: loadDrawerWidth(),
   setChatPanelWidth: (width) => {

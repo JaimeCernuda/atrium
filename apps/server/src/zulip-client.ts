@@ -1,5 +1,12 @@
 import { EventEmitter } from "node:events";
-import type { ChatMessage, ZulipChannel, ZulipTopic, ZulipUser, ZulipUserGroup } from "@atrium/shared";
+import type {
+  ChatMessage,
+  ZulipChannel,
+  ZulipDmConversation,
+  ZulipTopic,
+  ZulipUser,
+  ZulipUserGroup,
+} from "@atrium/shared";
 
 // Inlined from @atrium/shared. That package ships TS source and cannot be
 // `require`d at runtime by the compiled server (same reason submissions.ts
@@ -74,6 +81,19 @@ interface ZulipEvent {
   user_id?: number;
 }
 
+/**
+ * Build the conversation title for a DM from a raw message's display_recipient,
+ * excluding self. "Alice" for 1:1, "Alice, Bob" for a group, "You" for a
+ * note-to-self. Shared by the conversation list and the live dm dispatch so the
+ * two never disagree.
+ */
+function dmTitle(m: ZulipRawMessage, selfUserId: number): string {
+  const dr = Array.isArray(m.display_recipient) ? m.display_recipient : [];
+  const others = dr.filter((u) => u.id !== selfUserId);
+  if (others.length === 0) return "You";
+  return others.map((u) => u.full_name).join(", ");
+}
+
 /** Convert a raw Zulip message into the shared ChatMessage shape. */
 function toChatMessage(m: ZulipRawMessage): ChatMessage {
   return {
@@ -139,6 +159,7 @@ export interface ZulipQueueClientEvents {
   dm: (payload: {
     participantKey: string;
     participantIds: number[];
+    title: string;
     message: ChatMessage;
   }) => void;
 }
@@ -357,6 +378,54 @@ export class ZulipQueueClient extends EventEmitter {
     return res.messages.map(toChatMessage);
   }
 
+  /**
+   * Fetch the user's recent DM conversations — both 1:1 and group DMs. Pulls the
+   * most recent DMs via narrow [{"operator":"is","operand":"dm"}], groups them by
+   * the FULL participant set (display_recipient ∪ sender ∪ self) into one row per
+   * conversation, and returns them most-recent-first. The client computes unread.
+   */
+  async fetchRecentDmConversations(numBefore = 200): Promise<ZulipDmConversation[]> {
+    const narrow = JSON.stringify([{ operator: "is", operand: "dm" }]);
+    const params = new URLSearchParams({
+      anchor: "newest",
+      num_before: String(numBefore),
+      num_after: "0",
+      narrow,
+      apply_markdown: "true",
+    });
+    const res = (await this.request(`/messages?${params.toString()}`)) as {
+      messages: ZulipRawMessage[];
+    };
+
+    // Group by participant-set key. Zulip returns messages oldest-first within
+    // the window, so the LAST message seen for a key is the most recent — track
+    // it so each conversation carries its newest message.
+    const byKey = new Map<string, { ids: number[]; last: ZulipRawMessage }>();
+    for (const m of res.messages) {
+      const dr = Array.isArray(m.display_recipient) ? m.display_recipient : [];
+      const ids = [...new Set([this.selfUserId, m.sender_id, ...dr.map((u) => u.id)])];
+      const key = participantKey(ids);
+      const existing = byKey.get(key);
+      if (!existing || m.timestamp >= existing.last.timestamp) {
+        byKey.set(key, { ids, last: m });
+      }
+    }
+
+    const conversations: ZulipDmConversation[] = Array.from(byKey.entries()).map(
+      ([key, { ids, last }]) => ({
+        conversationKey: key,
+        participantIds: participantKey(ids).split(",").map(Number),
+        title: dmTitle(last, this.selfUserId),
+        lastMessage: toChatMessage(last),
+        lastMessageTs: new Date(last.timestamp * 1000).toISOString(),
+      }),
+    );
+
+    return conversations.sort(
+      (a, b) => new Date(b.lastMessageTs).getTime() - new Date(a.lastMessageTs).getTime(),
+    );
+  }
+
   // ───── Long-poll event loop ─────
 
   async start(): Promise<void> {
@@ -456,6 +525,7 @@ export class ZulipQueueClient extends EventEmitter {
       this.emit("dm", {
         participantKey: key,
         participantIds: key.split(",").map(Number),
+        title: dmTitle(m, this.selfUserId),
         message: toChatMessage(m),
       });
     } else if (ev.type === "reaction" && typeof ev.message_id === "number") {

@@ -74,9 +74,56 @@ function renderBody(body: string): { html: string } | null {
   return { html: rewriteUploadUrls(DOMPurify.sanitize(body, SANITIZE_CONFIG)) };
 }
 
+// A run of consecutive messages from one sender, within MERGE_WINDOW_MS. The
+// avatar + name + time render once per run; the bodies stack tightly beneath.
+interface MessageRun {
+  senderId: string;
+  senderName: string;
+  senderImageUrl?: string;
+  isOwn: boolean;
+  messages: ChatMessage[];
+}
+
+const MERGE_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Partition messages into runs of consecutive same-sender messages no more than
+ * MERGE_WINDOW_MS apart, so the stream reads like Zulip/Slack: one avatar+name
+ * header per run, bodies stacked beneath. A new sender or a large gap breaks the
+ * run. Order is preserved (array order is display order).
+ */
+function groupConsecutiveMessages(messages: ChatMessage[], meId: string): MessageRun[] {
+  const runs: MessageRun[] = [];
+  for (const msg of messages) {
+    const last = runs[runs.length - 1];
+    const prevMsg = last?.messages[last.messages.length - 1];
+    const gap = prevMsg
+      ? new Date(msg.createdAt).getTime() - new Date(prevMsg.createdAt).getTime()
+      : Infinity;
+    if (last && last.senderId === msg.sender.id && gap < MERGE_WINDOW_MS) {
+      last.messages.push(msg);
+    } else {
+      runs.push({
+        senderId: msg.sender.id,
+        senderName: msg.sender.name,
+        senderImageUrl: msg.sender.imageUrl,
+        isOwn: msg.sender.id === meId,
+        messages: [msg],
+      });
+    }
+  }
+  return runs;
+}
+
+/** Compact HH:MM for a run header, in the reader's locale. */
+function formatRunTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 /**
  * Shared message stream + composer used by both the right-drawer chat tabs and
  * the full-page Zulip client. Kept presentation-only: callers own data + send.
+ * Consecutive same-sender messages merge into one avatar+name block.
  */
 export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId: string }) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -84,91 +131,113 @@ export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId:
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
 
+  const runs = groupConsecutiveMessages(messages, meId);
+
   return (
     <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", p: 2 }}>
-      <Stack spacing={1.2}>
-        {messages.map((m) => {
-          const rendered = renderBody(m.body);
-          return (
+      <Stack spacing={1.5}>
+        {runs.map((run) => (
           <Stack
-            key={m.id}
-            direction={m.sender.id === meId ? "row-reverse" : "row"}
+            key={run.messages[0]!.id}
+            direction={run.isOwn ? "row-reverse" : "row"}
             spacing={1}
-            alignItems="flex-end"
+            alignItems="flex-start"
           >
-            <Tooltip title={m.sender.name}>
-              <Avatar src={m.sender.imageUrl} sx={{ width: 28, height: 28 }}>
-                {m.sender.name.charAt(0)}
+            <Tooltip title={run.senderName}>
+              <Avatar src={run.senderImageUrl} sx={{ width: 28, height: 28, mt: 0.25, flexShrink: 0 }}>
+                {run.senderName.charAt(0)}
               </Avatar>
             </Tooltip>
-            <Box
-              sx={{
-                bgcolor: m.sender.id === meId ? "primary.main" : "action.hover",
-                color: m.sender.id === meId ? "primary.contrastText" : "text.primary",
-                px: 1.5,
-                py: 0.75,
-                borderRadius: 2,
-                maxWidth: "75%",
-                wordBreak: "break-word",
-              }}
+            <Stack
+              spacing={0.25}
+              sx={{ maxWidth: "75%", alignItems: run.isOwn ? "flex-end" : "flex-start" }}
             >
-              {rendered ? (
-                <Box
-                  component="div"
-                  dangerouslySetInnerHTML={{ __html: rendered.html }}
-                  sx={{
-                    fontSize: "0.875rem",
-                    lineHeight: 1.5,
-                    "& p": { m: "4px 0" },
-                    "& p:first-of-type": { mt: 0 },
-                    "& p:last-of-type": { mb: 0 },
-                    "& a": { color: "inherit", textDecoration: "underline" },
-                    "& code": {
-                      fontFamily: "monospace",
-                      fontSize: "0.85em",
-                      bgcolor: "action.hover",
-                      px: 0.5,
-                      borderRadius: 0.5,
-                    },
-                    "& pre": {
-                      fontFamily: "monospace",
-                      bgcolor: "action.hover",
-                      p: 1,
-                      borderRadius: 1,
-                      overflow: "auto",
-                      my: 0.5,
-                    },
-                    "& pre code": { bgcolor: "transparent", p: 0 },
-                    "& blockquote": {
-                      borderLeft: 3,
-                      borderColor: "divider",
-                      pl: 1,
-                      my: 0.5,
-                      opacity: 0.85,
-                    },
-                    "& .user-mention": {
-                      bgcolor: "action.selected",
-                      px: 0.5,
-                      borderRadius: 0.5,
-                      fontWeight: 500,
-                    },
-                    "& img": {
-                      maxWidth: "100%",
-                      maxHeight: 360,
-                      borderRadius: 1,
-                      display: "block",
-                      my: 0.5,
-                    },
-                    "& ul, & ol": { pl: 2.5, my: 0.5 },
-                  }}
-                />
-              ) : (
-                <Typography variant="body2">{m.body}</Typography>
-              )}
-            </Box>
+              <Stack
+                direction={run.isOwn ? "row-reverse" : "row"}
+                spacing={0.75}
+                alignItems="baseline"
+                sx={{ px: 0.5 }}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                  {run.senderName}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.65rem" }}>
+                  {formatRunTime(run.messages[0]!.createdAt)}
+                </Typography>
+              </Stack>
+              {run.messages.map((m) => {
+                const rendered = renderBody(m.body);
+                return (
+                  <Box
+                    key={m.id}
+                    sx={{
+                      bgcolor: run.isOwn ? "primary.main" : "action.hover",
+                      color: run.isOwn ? "primary.contrastText" : "text.primary",
+                      px: 1.5,
+                      py: 0.75,
+                      borderRadius: 2,
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {rendered ? (
+                      <Box
+                        component="div"
+                        dangerouslySetInnerHTML={{ __html: rendered.html }}
+                        sx={{
+                          fontSize: "0.875rem",
+                          lineHeight: 1.5,
+                          "& p": { m: "4px 0" },
+                          "& p:first-of-type": { mt: 0 },
+                          "& p:last-of-type": { mb: 0 },
+                          "& a": { color: "inherit", textDecoration: "underline" },
+                          "& code": {
+                            fontFamily: "monospace",
+                            fontSize: "0.85em",
+                            bgcolor: run.isOwn ? "rgba(255,255,255,0.2)" : "action.hover",
+                            px: 0.5,
+                            borderRadius: 0.5,
+                          },
+                          "& pre": {
+                            fontFamily: "monospace",
+                            bgcolor: run.isOwn ? "rgba(255,255,255,0.2)" : "action.hover",
+                            p: 1,
+                            borderRadius: 1,
+                            overflow: "auto",
+                            my: 0.5,
+                          },
+                          "& pre code": { bgcolor: "transparent", p: 0 },
+                          "& blockquote": {
+                            borderLeft: 3,
+                            borderColor: "divider",
+                            pl: 1,
+                            my: 0.5,
+                            opacity: 0.85,
+                          },
+                          "& .user-mention": {
+                            bgcolor: run.isOwn ? "rgba(255,255,255,0.2)" : "action.selected",
+                            px: 0.5,
+                            borderRadius: 0.5,
+                            fontWeight: 500,
+                          },
+                          "& img": {
+                            maxWidth: "100%",
+                            maxHeight: 360,
+                            borderRadius: 1,
+                            display: "block",
+                            my: 0.5,
+                          },
+                          "& ul, & ol": { pl: 2.5, my: 0.5 },
+                        }}
+                      />
+                    ) : (
+                      <Typography variant="body2">{m.body}</Typography>
+                    )}
+                  </Box>
+                );
+              })}
+            </Stack>
           </Stack>
-          );
-        })}
+        ))}
         <div ref={bottomRef} />
       </Stack>
     </Box>

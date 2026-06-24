@@ -37,6 +37,7 @@ export interface ZulipFanout {
     payload: {
       participantKey: string;
       participantIds: number[];
+      title: string;
       message: import("@atrium/shared").ChatMessage;
     },
   ) => void;
