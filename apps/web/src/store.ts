@@ -7,6 +7,7 @@ import type {
   Room,
   User,
   ZulipChannel,
+  ZulipChannelFolder,
   ZulipDmConversation,
   ZulipTopic,
   ZulipUser,
@@ -75,6 +76,8 @@ interface AtriumState {
 
   zulipChannels: ZulipChannel[];
   setZulipChannels: (channels: ZulipChannel[]) => void;
+  zulipFolders: ZulipChannelFolder[];
+  setZulipFolders: (folders: ZulipChannelFolder[]) => void;
   zulipTopicsByChannel: Record<number, ZulipTopic[]>;
   setZulipTopics: (channelId: number, topics: ZulipTopic[]) => void;
   zulipMessagesByTopic: Record<string, ChatMessage[]>; // key: `${channelId}:${topicName}`
@@ -237,6 +240,8 @@ export const useStore = create<AtriumState>((set) => ({
 
   zulipChannels: [],
   setZulipChannels: (zulipChannels) => set({ zulipChannels }),
+  zulipFolders: [],
+  setZulipFolders: (zulipFolders) => set({ zulipFolders }),
   zulipTopicsByChannel: {},
   setZulipTopics: (channelId, topics) =>
     set((state) => ({

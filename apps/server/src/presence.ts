@@ -69,6 +69,9 @@ export function createPresenceServer(
     onDm: (userId, payload) => {
       for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:dm", payload);
     },
+    onChannels: (userId, payload) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:channels", payload);
+    },
   };
   const zulip = new ZulipManager(config, zulipFanout);
 
@@ -128,28 +131,27 @@ export function createPresenceServer(
     zulip.acquire(user.id).catch((err) => console.error("zulip acquire", err));
 
     socket.on("zulip:fetch-channels", async (cb) => {
-      const client = zulip.get(user.id);
-      if (!client) {
-        cb?.("not linked");
-        return;
-      }
       try {
-        const channels = await client.fetchChannels();
-        socket.emit("zulip:channels", { channels });
-        cb?.(null, channels);
+        // Served from the per-user cache (24h TTL); folders ride the broadcast.
+        const data = await zulip.getChannels(user.id);
+        if (!data) {
+          cb?.("not linked");
+          return;
+        }
+        socket.emit("zulip:channels", data);
+        cb?.(null, data.channels);
       } catch (err) {
         cb?.(err instanceof Error ? err.message : "fetch-channels failed");
       }
     });
 
     socket.on("zulip:fetch-topics", async (channelId, cb) => {
-      const client = zulip.get(user.id);
-      if (!client) {
-        cb?.("not linked");
-        return;
-      }
       try {
-        const topics = await client.fetchTopics(channelId);
+        const topics = await zulip.getTopics(user.id, channelId);
+        if (!topics) {
+          cb?.("not linked");
+          return;
+        }
         socket.emit("zulip:topics", { channelId, topics });
         cb?.(null, topics);
       } catch (err) {

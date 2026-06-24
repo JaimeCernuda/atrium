@@ -1,10 +1,13 @@
+import type { ZulipTopic } from "@atrium/shared";
 import type { Config } from "./config.js";
 import { getZulipKey } from "./db.js";
 import { decryptZulipKey } from "./zulip-crypto.js";
 import { ZulipQueueClient } from "./zulip-client.js";
+import { ZulipDataCache, type ChannelsData } from "./zulip-cache.js";
 
 interface ManagedEntry {
   client: ZulipQueueClient;
+  cache: ZulipDataCache;
   refCount: number;
 }
 
@@ -41,6 +44,9 @@ export interface ZulipFanout {
       message: import("@atrium/shared").ChatMessage;
     },
   ) => void;
+  // Refreshed channels+folders pushed out-of-band (cache background refresh or
+  // admin reload) so the user's sockets can re-render without a client request.
+  onChannels: (userId: string, payload: ChannelsData) => void;
 }
 
 /**
@@ -143,10 +149,46 @@ export class ZulipManager {
     client.on("reaction", (payload) => this.fanout.onReaction(userId, payload));
     client.on("dm", (payload) => this.fanout.onDm(userId, payload));
 
-    const entry: ManagedEntry = { client, refCount };
+    const cache = new ZulipDataCache(
+      () => client.fetchChannels(),
+      (channelId) => client.fetchTopics(channelId),
+      (data) => this.fanout.onChannels(userId, data),
+    );
+
+    const entry: ManagedEntry = { client, cache, refCount };
     this.entries.set(userId, entry);
     void client.start();
     return client;
+  }
+
+  /**
+   * Channels+folders for a user, served from the per-user cache (24h TTL,
+   * stale-while-revalidate). Returns null when the user isn't linked.
+   */
+  async getChannels(userId: string): Promise<ChannelsData | null> {
+    const entry = this.entries.get(userId);
+    if (!entry) return null;
+    return entry.cache.getChannels();
+  }
+
+  /** Topics for a channel, served from the per-user cache (4h TTL). */
+  async getTopics(userId: string, channelId: number): Promise<ZulipTopic[] | null> {
+    const entry = this.entries.get(userId);
+    if (!entry) return null;
+    return entry.cache.getTopics(channelId);
+  }
+
+  /**
+   * Admin-triggered force reload: clear the user's cache, refetch channels now,
+   * and fan the fresh data out to that user's sockets. Returns null when the
+   * user isn't linked (no live client to refetch from).
+   */
+  async forceReload(userId: string): Promise<ChannelsData | null> {
+    const entry = this.entries.get(userId);
+    if (!entry) return null;
+    const data = await entry.cache.forceReload();
+    this.fanout.onChannels(userId, data);
+    return data;
   }
 
   /** Current client for a user without changing the refcount. */

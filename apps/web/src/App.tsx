@@ -171,6 +171,17 @@ export function App() {
                 )}
                 {can(user, "manage_rooms") && (
                   <Route
+                    path="/admin/zulip"
+                    element={
+                      <AppShell>
+                        <AdminGlobalSettings />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_rooms") && (
+                  // Back-compat: the old "Global chat" path still resolves.
+                  <Route
                     path="/admin/global"
                     element={
                       <AppShell>

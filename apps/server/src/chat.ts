@@ -143,6 +143,21 @@ export async function registerChat(
     return await getGlobalChatConfig();
   });
 
+  // ───── Admin: force-reload the Zulip channel/folder/topic cache ─────
+  // Channels, folders, and topics are cached server-side (24h / 4h TTL) so they
+  // aren't refetched on every connect. This clears the admin's own cache and
+  // refetches now; the fresh channels reach the admin's browser via the
+  // zulip:channels socket fan-out. Per-user by design — Zulip data is per-key.
+  app.post("/api/admin/zulip/reload-cache", async (req, reply) => {
+    const me = await requirePermission(req, reply, "manage_rooms", config.session.cookieName);
+    if (!me) return reply;
+    const manager = zulipRef.current;
+    if (!manager) return reply.code(409).send({ error: "Zulip is not linked." });
+    const data = await manager.forceReload(me.id);
+    if (!data) return reply.code(409).send({ error: "Zulip is not linked." });
+    return { ok: true, reloadedAt: new Date().toISOString() };
+  });
+
   // ───── Admin: Zulip user-group visibility policy ─────
   app.get("/api/admin/user-group-policy", async (req, reply) => {
     const me = await user(req, reply);

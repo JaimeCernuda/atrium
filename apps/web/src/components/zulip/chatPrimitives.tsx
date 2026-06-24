@@ -16,8 +16,14 @@ import {
 import SendIcon from "@mui/icons-material/Send";
 import AttachFileIcon from "@mui/icons-material/AttachFile";
 import GroupIcon from "@mui/icons-material/Group";
+import TagIcon from "@mui/icons-material/Tag";
+import FormatBoldIcon from "@mui/icons-material/FormatBold";
+import FormatItalicIcon from "@mui/icons-material/FormatItalic";
+import CodeIcon from "@mui/icons-material/Code";
+import DataObjectIcon from "@mui/icons-material/DataObject";
 import DOMPurify from "dompurify";
-import type { ChatMessage, ZulipUser, ZulipUserGroup } from "@atrium/shared";
+import { getSocket } from "../../socket";
+import type { ChatMessage, ZulipChannel, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { useStore } from "../../store";
 
 // Zulip already sanitizes server-side; DOMPurify is defense-in-depth before we
@@ -244,42 +250,49 @@ export function MessageList({ messages, meId }: { messages: ChatMessage[]; meId:
   );
 }
 
-// A mention candidate — either a Zulip user or a user group — normalized so the
-// suggestion list and insertion logic don't care which kind it is.
+// An autocomplete candidate — a Zulip user, user group, or channel — normalized
+// so the suggestion list and insertion logic don't care which kind it is.
 interface MentionItem {
-  kind: "user" | "group";
+  kind: "user" | "group" | "channel";
   id: number;
   name: string;
-  detail?: string; // email for users, member count for groups
+  detail?: string; // email for users, member count for groups, "channel" for channels
   imageUrl?: string;
-  // The exact markup Zulip renders to a mention span on receipt.
-  markup: string; // `@**Full Name**` (user) / `@*group-name*` (group)
+  // The exact markup Zulip renders on receipt.
+  // user: `@**Full Name**`  group: `@*group-name*`  channel: `#**Channel Name**`
+  markup: string;
 }
 
 const MENTION_LIMIT = 8;
 
-/** Open mention state: the "@" position in the body and the typed query after it. */
+// Trigger characters and what each completes against.
+type TriggerChar = "@" | "#";
+
+/** Open autocomplete state: the trigger char + its position + the typed query. */
 interface MentionState {
-  at: number; // index of the "@" in body
-  query: string; // text typed after "@" (before caret)
+  trigger: TriggerChar;
+  at: number; // index of the trigger char in body
+  query: string; // text typed after the trigger (before caret)
 }
 
-// Find an active "@mention" token immediately before the caret. A token is the
-// "@" plus the run of non-whitespace after it; it's active only when the "@" is
-// at the start or preceded by whitespace (so emails like a@b don't trigger it).
+// Find an active autocomplete token immediately before the caret. A token is a
+// trigger char ("@" or "#") plus the run of characters after it up to the caret.
+// It's active only when the trigger is at the start or preceded by whitespace,
+// so emails (a@b) and mid-word "#" never trigger it. Crucially we DON'T abort on
+// an internal "@"/email: we scan back to the nearest whitespace and inspect the
+// first char of the token, so "type @" with no query still opens the popup.
 function detectMention(value: string, caret: number): MentionState | null {
-  let i = caret - 1;
-  while (i >= 0) {
-    const ch = value[i]!;
-    if (ch === "@") {
-      const before = i === 0 ? " " : value[i - 1]!;
-      if (!/\s/.test(before)) return null;
-      return { at: i, query: value.slice(i + 1, caret) };
-    }
-    if (/\s/.test(ch)) return null;
-    i -= 1;
-  }
-  return null;
+  // Walk back to the start of the current whitespace-delimited token.
+  let start = caret;
+  while (start > 0 && !/\s/.test(value[start - 1]!)) start -= 1;
+  const first = value[start];
+  if (first !== "@" && first !== "#") return null;
+  const before = start === 0 ? " " : value[start - 1]!;
+  if (!/\s/.test(before)) return null;
+  const query = value.slice(start + 1, caret);
+  // A query containing whitespace can't be an open token (we'd have stopped at
+  // the whitespace above), so query here is always a single run — safe to use.
+  return { trigger: first, at: start, query };
 }
 
 export function Composer({
@@ -291,6 +304,7 @@ export function Composer({
 }) {
   const zulipUsers = useStore((s) => s.zulipUsers);
   const zulipUserGroups = useStore((s) => s.zulipUserGroups);
+  const zulipChannels = useStore((s) => s.zulipChannels);
 
   const [body, setBody] = useState("");
   const [mention, setMention] = useState<MentionState | null>(null);
@@ -302,8 +316,19 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
 
-  // Build the full candidate set once per users/groups change; filter per query.
-  const allCandidates = useMemo<MentionItem[]>(() => {
+  // The @-mention popup needs the org's users/groups to be loaded. They arrive
+  // via the zulip:fetch-users round-trip on connect, but a composer that mounts
+  // before that (or in a tab that never opened the DM list) would have an empty
+  // candidate set, so typing "@" produced silence. Request them on mount when
+  // they're missing so the popup always has something to show. Cheap + idempotent
+  // server-side; the store dedupes the resulting snapshot.
+  useEffect(() => {
+    if (zulipUsers.length === 0) getSocket().emit("zulip:fetch-users");
+    if (zulipChannels.length === 0) getSocket().emit("zulip:fetch-channels");
+  }, [zulipUsers.length, zulipChannels.length]);
+
+  // Build the @-mention candidate set (users + groups) once per change.
+  const mentionCandidates = useMemo<MentionItem[]>(() => {
     const users: MentionItem[] = zulipUsers.map((u: ZulipUser) => ({
       kind: "user" as const,
       id: u.zulipUserId,
@@ -322,18 +347,33 @@ export function Composer({
     return [...users, ...groups];
   }, [zulipUsers, zulipUserGroups]);
 
+  // Build the #-channel candidate set. Zulip's channel-link markup is
+  // `#**Channel Name**` (verified at zulip.com/api).
+  const channelCandidates = useMemo<MentionItem[]>(
+    () =>
+      zulipChannels.map((c: ZulipChannel) => ({
+        kind: "channel" as const,
+        id: c.id,
+        name: c.name,
+        detail: "channel",
+        markup: `#**${c.name}**`,
+      })),
+    [zulipChannels],
+  );
+
   const suggestions = useMemo<MentionItem[]>(() => {
     if (!mention) return [];
+    const pool = mention.trigger === "#" ? channelCandidates : mentionCandidates;
     const q = mention.query.trim().toLowerCase();
     const matches = q
-      ? allCandidates.filter(
+      ? pool.filter(
           (c) =>
             c.name.toLowerCase().includes(q) ||
             (c.detail?.toLowerCase().includes(q) ?? false),
         )
-      : allCandidates;
+      : pool;
     return matches.slice(0, MENTION_LIMIT);
-  }, [mention, allCandidates]);
+  }, [mention, mentionCandidates, channelCandidates]);
 
   const mentionOpen = mention != null && suggestions.length > 0;
 
@@ -363,9 +403,58 @@ export function Composer({
     if (!mention) return;
     const el = inputRef.current;
     const caret = el?.selectionEnd ?? mention.at + 1 + mention.query.length;
-    // Replace "@" + typed query with the markup, then a trailing space.
+    // Replace the trigger + typed query with the markup, then a trailing space.
     insertAtCaret(item.markup + " ", mention.at, caret);
     setMention(null);
+  };
+
+  // Wrap the current selection (or the caret position) in Zulip markdown. When
+  // there's a selection it's wrapped in place; with no selection, the markers
+  // are inserted and the caret lands between them so the user types inside.
+  const wrapSelection = (before: string, after: string, placeholder = "") => {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? body.length;
+    const end = el?.selectionEnd ?? start;
+    const selected = body.slice(start, end) || placeholder;
+    const next = body.slice(0, start) + before + selected + after + body.slice(end);
+    setBody(next);
+    setMention(null);
+    // Caret: if we had a selection, place it after the wrapped text; otherwise
+    // drop it between the markers (or after the placeholder) so typing continues.
+    const caret =
+      end > start ? start + before.length + selected.length + after.length : start + before.length + selected.length;
+    requestAnimationFrame(() => {
+      const node = inputRef.current;
+      if (node) {
+        node.focus();
+        node.setSelectionRange(caret, caret);
+      }
+    });
+  };
+
+  // A fenced code block wants its own lines. Insert ```\n<sel>\n``` and leave the
+  // caret on the (possibly empty) content line.
+  const insertCodeBlock = () => {
+    const el = inputRef.current;
+    const start = el?.selectionStart ?? body.length;
+    const end = el?.selectionEnd ?? start;
+    const selected = body.slice(start, end);
+    // Pad with newlines so the fence sits on its own line, but don't double up if
+    // we're already at a line start / the body is empty.
+    const needsLeadingNl = start > 0 && body[start - 1] !== "\n";
+    const open = (needsLeadingNl ? "\n" : "") + "```\n";
+    const close = "\n```\n";
+    const next = body.slice(0, start) + open + selected + close + body.slice(end);
+    setBody(next);
+    setMention(null);
+    const caret = start + open.length + selected.length;
+    requestAnimationFrame(() => {
+      const node = inputRef.current;
+      if (node) {
+        node.focus();
+        node.setSelectionRange(caret, caret);
+      }
+    });
   };
 
   const onChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -384,6 +473,25 @@ export function Composer({
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Formatting shortcuts (Ctrl/Cmd + B / I / E for inline code).
+    if (e.ctrlKey || e.metaKey) {
+      const k = e.key.toLowerCase();
+      if (k === "b") {
+        e.preventDefault();
+        wrapSelection("**", "**", "bold");
+        return;
+      }
+      if (k === "i") {
+        e.preventDefault();
+        wrapSelection("*", "*", "italic");
+        return;
+      }
+      if (k === "e") {
+        e.preventDefault();
+        wrapSelection("`", "`", "code");
+        return;
+      }
+    }
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -477,7 +585,37 @@ export function Composer({
           {uploadError}
         </Typography>
       )}
-      <Stack direction="row" spacing={1} alignItems="flex-end" sx={{ p: 1 }} ref={anchorRef}>
+      <Stack direction="row" spacing={0.25} sx={{ px: 1, pt: 0.5 }}>
+        <Tooltip title="Bold (Ctrl/Cmd+B)">
+          <span>
+            <IconButton size="small" disabled={disabled} onClick={() => wrapSelection("**", "**", "bold")}>
+              <FormatBoldIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip title="Italic (Ctrl/Cmd+I)">
+          <span>
+            <IconButton size="small" disabled={disabled} onClick={() => wrapSelection("*", "*", "italic")}>
+              <FormatItalicIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip title="Inline code (Ctrl/Cmd+E)">
+          <span>
+            <IconButton size="small" disabled={disabled} onClick={() => wrapSelection("`", "`", "code")}>
+              <CodeIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+        <Tooltip title="Code block">
+          <span>
+            <IconButton size="small" disabled={disabled} onClick={insertCodeBlock}>
+              <DataObjectIcon fontSize="small" />
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Stack>
+      <Stack direction="row" spacing={1} alignItems="flex-end" sx={{ px: 1, pb: 1 }} ref={anchorRef}>
         <input
           ref={fileInputRef}
           type="file"
@@ -538,6 +676,10 @@ export function Composer({
                 {item.kind === "user" ? (
                   <Avatar src={item.imageUrl} sx={{ width: 24, height: 24, mr: 1 }}>
                     {item.name.charAt(0)}
+                  </Avatar>
+                ) : item.kind === "channel" ? (
+                  <Avatar sx={{ width: 24, height: 24, mr: 1 }}>
+                    <TagIcon sx={{ fontSize: 16 }} />
                   </Avatar>
                 ) : (
                   <Avatar sx={{ width: 24, height: 24, mr: 1 }}>

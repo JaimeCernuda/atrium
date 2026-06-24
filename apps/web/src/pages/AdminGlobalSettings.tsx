@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
+  CircularProgress,
   Container,
   MenuItem,
   Paper,
@@ -9,6 +10,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import type { GlobalChatConfig } from "@atrium/shared";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
@@ -20,6 +22,35 @@ export function AdminGlobalSettings() {
   const [topicName, setTopicName] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [reloading, setReloading] = useState(false);
+  const [reloadMsg, setReloadMsg] = useState<{ kind: "success" | "error"; text: string } | null>(
+    null,
+  );
+
+  const reloadChannels = async () => {
+    setReloadMsg(null);
+    setReloading(true);
+    try {
+      const res = await fetch("/api/admin/zulip/reload-cache", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        setReloadMsg({ kind: "error", text: body?.error ?? `Reload failed: ${res.status}` });
+        return;
+      }
+      // The server fans refreshed channels back over the socket; no manual
+      // re-fetch needed. Nudge it anyway so a just-opened tab repaints promptly.
+      getSocket().emit("zulip:fetch-channels");
+      setReloadMsg({ kind: "success", text: "Channels, folders, and topics refreshed from Zulip." });
+    } catch {
+      setReloadMsg({ kind: "error", text: "Reload failed." });
+    } finally {
+      setReloading(false);
+    }
+  };
 
   useEffect(() => {
     getSocket().emit("zulip:fetch-channels");
@@ -63,14 +94,21 @@ export function AdminGlobalSettings() {
   return (
     <Container maxWidth="sm" sx={{ py: 3 }}>
       <Typography variant="h4" sx={{ mb: 1 }}>
-        Global chat
+        Zulip
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Global chat posts to this Zulip channel and topic. Members read and write the
-        Global tab and it flows straight into Zulip.
+        Settings for the office&apos;s Zulip integration: the Global chat mapping and the
+        cached channel list.
       </Typography>
 
-      <Paper sx={{ p: 2 }}>
+      <Paper sx={{ p: 2, mb: 2 }}>
+        <Typography variant="h6" sx={{ mb: 0.5 }}>
+          Global chat mapping
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Global chat posts to this Zulip channel and topic. Members read and write the
+          Global tab and it flows straight into Zulip.
+        </Typography>
         <Stack spacing={2}>
           {!configured && (
             <Alert severity="info">No global channel is set. Pick a channel and topic below.</Alert>
@@ -100,6 +138,29 @@ export function AdminGlobalSettings() {
           />
           <Button variant="contained" onClick={save} sx={{ alignSelf: "flex-start" }}>
             Save
+          </Button>
+        </Stack>
+      </Paper>
+
+      <Paper sx={{ p: 2 }}>
+        <Typography variant="h6" sx={{ mb: 0.5 }}>
+          Channel cache
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Channels, folders, and topics are cached for 24 hours so they aren&apos;t refetched
+          on every connect. Reload to pull the latest from Zulip now — handy after adding a
+          channel or folder.
+        </Typography>
+        <Stack spacing={2}>
+          {reloadMsg && <Alert severity={reloadMsg.kind}>{reloadMsg.text}</Alert>}
+          <Button
+            variant="outlined"
+            onClick={reloadChannels}
+            disabled={reloading}
+            startIcon={reloading ? <CircularProgress size={16} /> : <RefreshIcon />}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            {reloading ? "Reloading…" : "Reload channels & topics"}
           </Button>
         </Stack>
       </Paper>

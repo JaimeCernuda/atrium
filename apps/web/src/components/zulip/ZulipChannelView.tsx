@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Chip,
+  Collapse,
   IconButton,
   List,
   ListItemButton,
@@ -10,6 +11,9 @@ import {
 } from "@mui/material";
 import TagIcon from "@mui/icons-material/Tag";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import type { ZulipChannel } from "@atrium/shared";
 import { useStore } from "../../store";
 import { getSocket } from "../../socket";
 import { UnlinkedZulipFallback } from "../UnlinkedZulipFallback";
@@ -26,6 +30,7 @@ export function ZulipChannelView({ meId }: { meId: string }) {
   const connected = useStore((s) => s.zulipConnected);
   const error = useStore((s) => s.zulipError);
   const channels = useStore((s) => s.zulipChannels);
+  const folders = useStore((s) => s.zulipFolders);
   const topicsByChannel = useStore((s) => s.zulipTopicsByChannel);
   const activeChannel = useStore((s) => s.zulipActiveChannel);
   const activeTopic = useStore((s) => s.zulipActiveTopic);
@@ -77,6 +82,41 @@ export function ZulipChannelView({ meId }: { meId: string }) {
       removeZulipUnreadTopic(`${activeChannel}:${activeTopic}`);
     }
   }, [activeChannel, activeTopic, removeZulipUnreadTopic]);
+
+  // Group channels by Zulip channel folder. Folders keep Zulip's `order`; an
+  // "Other" bucket collects channels with no folder. Empty groups are dropped so
+  // realms without folders (or sparsely-foldered ones) render cleanly. When no
+  // folders exist at all this collapses to a single ungrouped list — no
+  // regression from the old flat view.
+  const OTHER_KEY = -1;
+  const groups = useMemo(() => {
+    const byFolder = new Map<number, ZulipChannel[]>();
+    for (const c of channels) {
+      const key = c.folderId ?? OTHER_KEY;
+      (byFolder.get(key) ?? byFolder.set(key, []).get(key)!).push(c);
+    }
+    const ordered = [...folders]
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .filter((f) => byFolder.has(f.id))
+      .map((f) => ({ id: f.id, name: f.name, channels: byFolder.get(f.id)! }));
+    const other = byFolder.get(OTHER_KEY);
+    // Only label the leftover bucket "Other" when there's at least one real
+    // folder section to distinguish it from; otherwise it's the whole list.
+    if (other && other.length > 0) {
+      ordered.push({
+        id: OTHER_KEY,
+        name: ordered.length > 0 ? "Other" : "Channels",
+        channels: other,
+      });
+    }
+    return ordered;
+  }, [channels, folders]);
+
+  // Collapsed-section state, keyed by folder id. Sections default to expanded;
+  // a folder appears here only once toggled shut.
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+  const toggleFolder = (id: number) =>
+    setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
 
   if (!linked) {
     return (
@@ -215,19 +255,51 @@ export function ZulipChannelView({ meId }: { meId: string }) {
           </Typography>
         </Box>
       ) : (
-        <List dense disablePadding>
-          {channels.map((c) => (
-            <ListItemButton key={c.id} onClick={() => setActiveChannel(c.id, null)}>
-              <TagIcon
-                fontSize="small"
-                sx={{ mr: 1, color: c.subscribed ? "primary.main" : "text.disabled" }}
-              />
-              <Typography variant="body2" sx={{ fontWeight: c.subscribed ? 600 : 400 }}>
-                {c.name}
-              </Typography>
-            </ListItemButton>
-          ))}
-        </List>
+        groups.map((group) => {
+          const isCollapsed = Boolean(collapsed[group.id]);
+          return (
+            <Box key={group.id}>
+              <ListItemButton
+                onClick={() => toggleFolder(group.id)}
+                sx={{ py: 0.5 }}
+                aria-expanded={!isCollapsed}
+              >
+                {isCollapsed ? (
+                  <ChevronRightIcon fontSize="small" sx={{ mr: 0.5, color: "text.secondary" }} />
+                ) : (
+                  <ExpandMoreIcon fontSize="small" sx={{ mr: 0.5, color: "text.secondary" }} />
+                )}
+                <Typography
+                  variant="overline"
+                  sx={{ color: "text.secondary", lineHeight: 1.6, flex: 1 }}
+                  noWrap
+                >
+                  {group.name}
+                </Typography>
+                <Chip label={group.channels.length} size="small" sx={{ height: 18, fontSize: "0.65rem" }} />
+              </ListItemButton>
+              <Collapse in={!isCollapsed} timeout="auto" unmountOnExit>
+                <List dense disablePadding>
+                  {group.channels.map((c) => (
+                    <ListItemButton
+                      key={c.id}
+                      onClick={() => setActiveChannel(c.id, null)}
+                      sx={{ pl: 3 }}
+                    >
+                      <TagIcon
+                        fontSize="small"
+                        sx={{ mr: 1, color: c.subscribed ? "primary.main" : "text.disabled" }}
+                      />
+                      <Typography variant="body2" sx={{ fontWeight: c.subscribed ? 600 : 400 }}>
+                        {c.name}
+                      </Typography>
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Collapse>
+            </Box>
+          );
+        })
       )}
     </Box>
   );

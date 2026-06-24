@@ -9,7 +9,7 @@ const ITEMS: Array<{ label: string; path: string; permission: PermissionKey }> =
   { label: "Members", path: "/admin/members", permission: "manage_members" },
   { label: "Roles", path: "/admin/roles", permission: "manage_roles" },
   { label: "Rooms", path: "/admin/rooms", permission: "manage_rooms" },
-  { label: "Global chat", path: "/admin/global", permission: "manage_rooms" },
+  { label: "Zulip", path: "/admin/zulip", permission: "manage_rooms" },
   { label: "User groups", path: "/admin/user-groups", permission: "manage_rooms" },
   { label: "Metrics", path: "/admin/metrics", permission: "view_metrics" },
   { label: "Bots", path: "/admin/bot-tokens", permission: "manage_bots" },

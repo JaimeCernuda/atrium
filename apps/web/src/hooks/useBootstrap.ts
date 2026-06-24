@@ -149,9 +149,10 @@ export function useBootstrap(): { loading: boolean } {
       });
       socket.on("zulip:disconnected", () => useStore.getState().setZulipConnected(false));
       socket.on("zulip:error", ({ message }) => useStore.getState().setZulipError(message));
-      socket.on("zulip:channels", ({ channels }) =>
-        useStore.getState().setZulipChannels(channels),
-      );
+      socket.on("zulip:channels", ({ channels, folders }) => {
+        useStore.getState().setZulipChannels(channels);
+        useStore.getState().setZulipFolders(folders ?? []);
+      });
       socket.on("zulip:topics", ({ channelId, topics }) =>
         useStore.getState().setZulipTopics(channelId, topics),
       );

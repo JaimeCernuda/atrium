@@ -237,6 +237,15 @@ export interface ZulipChannel {
   name: string;        // stream name (canonical key for narrows + sending)
   display_name: string;// description or name, for UI
   subscribed: boolean;
+  // Zulip 11+ channel-folder membership. null/undefined => ungrouped ("Other").
+  folderId?: number | null;
+}
+
+/** A Zulip channel folder/category (Zulip 11+). Channels carry `folderId`. */
+export interface ZulipChannelFolder {
+  id: number;
+  name: string;
+  order?: number; // Zulip's display order; lower sorts first
 }
 
 export interface ZulipTopic {
@@ -333,7 +342,10 @@ export type ServerToClientEvents = {
   "zulip:connected": () => void;
   "zulip:disconnected": () => void;
   "zulip:error": (payload: { message: string }) => void;
-  "zulip:channels": (payload: { channels: ZulipChannel[] }) => void;
+  "zulip:channels": (payload: {
+    channels: ZulipChannel[];
+    folders: ZulipChannelFolder[];
+  }) => void;
   "zulip:topics": (payload: { channelId: number; topics: ZulipTopic[] }) => void;
   "zulip:message": (payload: ZulipMessagePayload) => void;
   "zulip:reaction": (payload: ZulipReactionPayload) => void;

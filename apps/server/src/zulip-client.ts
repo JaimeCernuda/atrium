@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type {
   ChatMessage,
   ZulipChannel,
+  ZulipChannelFolder,
   ZulipDmConversation,
   ZulipTopic,
   ZulipUser,
@@ -57,12 +58,22 @@ interface ZulipSubscription {
   stream_id: number;
   name: string;
   description?: string;
+  // Zulip 11+ channel-folder membership; absent on older realms.
+  folder_id?: number | null;
 }
 
 interface ZulipStream {
   stream_id: number;
   name: string;
   description?: string;
+  folder_id?: number | null;
+}
+
+interface ZulipChannelFolderRaw {
+  id: number;
+  name: string;
+  order?: number;
+  is_archived?: boolean;
 }
 
 interface ZulipTopicRaw {
@@ -223,8 +234,13 @@ export class ZulipQueueClient extends EventEmitter {
     return json;
   }
 
-  /** The user's subscribed channels (streams). */
-  async fetchChannels(): Promise<ZulipChannel[]> {
+  /**
+   * The user's channels (subscribed + browsable) and the realm's channel
+   * folders. Each channel carries its `folderId` when the realm exposes folder
+   * membership (Zulip 11+); on older realms folderId stays null and `folders` is
+   * empty, so callers degrade to a single flat list with no regression.
+   */
+  async fetchChannels(): Promise<{ channels: ZulipChannel[]; folders: ZulipChannelFolder[] }> {
     const subs = (await this.request("/users/me/subscriptions")) as {
       subscriptions: ZulipSubscription[];
     };
@@ -234,6 +250,7 @@ export class ZulipQueueClient extends EventEmitter {
       name: s.name,
       display_name: s.description?.trim() ? s.description : s.name,
       subscribed: true,
+      folderId: s.folder_id ?? null,
     }));
     // Also surface non-subscribed public channels the user can browse/join.
     try {
@@ -245,12 +262,31 @@ export class ZulipQueueClient extends EventEmitter {
           name: s.name,
           display_name: s.description?.trim() ? s.description : s.name,
           subscribed: false,
+          folderId: s.folder_id ?? null,
         });
       }
     } catch {
       // /streams may be restricted; subscribed list alone is still useful.
     }
-    return channels;
+    const folders = await this.fetchChannelFolders();
+    return { channels, folders };
+  }
+
+  /**
+   * The realm's channel folders (Zulip 11+). Returns [] when the endpoint is
+   * absent (older realm) or restricted, so the channel list degrades to flat.
+   */
+  async fetchChannelFolders(): Promise<ZulipChannelFolder[]> {
+    try {
+      const res = (await this.request("/channel_folders")) as {
+        channel_folders: ZulipChannelFolderRaw[];
+      };
+      return (res.channel_folders ?? [])
+        .filter((f) => !f.is_archived)
+        .map((f) => ({ id: f.id, name: f.name, order: f.order }));
+    } catch {
+      return [];
+    }
   }
 
   /** Topics in a channel, newest-first as Zulip returns them. */
