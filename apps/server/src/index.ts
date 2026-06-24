@@ -34,7 +34,30 @@ const zulipRef: { current: ZulipManager | null } = { current: null };
 const avatarDir = process.env.AVATAR_DIR ?? "/data/avatars";
 mkdirSync(avatarDir, { recursive: true });
 
-await app.register(cors, { origin: true, credentials: true });
+// Lock CORS to an explicit allowlist. `origin: true` reflects any caller's
+// Origin and, with credentials, lets ANY website script credentialed requests
+// (including the multipart upload-file endpoint) against a linked user's
+// session. The allowlist is the app's own public origin plus any extras from
+// CORS_ORIGINS, and localhost dev origins when running in development.
+const corsOrigins = new Set<string>([config.publicUrl]);
+for (const extra of (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean)) {
+  corsOrigins.add(extra);
+}
+if (process.env.NODE_ENV === "development") {
+  corsOrigins.add("http://localhost:5173");
+  corsOrigins.add("http://127.0.0.1:5173");
+}
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // Same-origin / non-browser requests (no Origin header) are allowed.
+    if (!origin || corsOrigins.has(origin)) return cb(null, true);
+    cb(new Error("Not allowed by CORS"), false);
+  },
+  credentials: true,
+});
 await app.register(cookie);
 await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024, files: 15 } });
 await registerAuth(app, config, broadcasterRef);
