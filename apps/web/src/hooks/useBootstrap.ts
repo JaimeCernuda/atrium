@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ChatMessage, Room, User } from "@atrium/shared";
+import type { ChatMessage, Room, User, ZulipLinkStatus } from "@atrium/shared";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
 
@@ -51,6 +51,15 @@ export function useBootstrap(): { loading: boolean } {
         setGlobalMessages((await chatRes.json()) as ChatMessage[]);
       }
 
+      const zulipRes = await fetch("/api/zulip/status", { credentials: "include" });
+      if (zulipRes.ok && !cancelled) {
+        const status = (await zulipRes.json()) as ZulipLinkStatus;
+        useStore.getState().setZulipStatus({
+          linked: status.linked,
+          zulipEmail: status.zulipEmail,
+        });
+      }
+
       const socket = getSocket();
       socket.on("presence:snapshot", (state) => {
         setPresence(state);
@@ -95,6 +104,28 @@ export function useBootstrap(): { loading: boolean } {
       socket.on("chat:dm", appendDmMessage);
       socket.on("ping:received", setActivePing);
       socket.on("user:updated", (u) => useStore.getState().patchUserEverywhere(u));
+
+      // Zulip listeners — registered BEFORE connect so no early event is lost.
+      socket.on("zulip:connected", () => {
+        const store = useStore.getState();
+        store.setZulipConnected(true);
+        store.setZulipError(null);
+        // Fetch channels only once the queue is live; emitting before connect
+        // would be dropped (autoConnect is off until socket.connect()).
+        socket.emit("zulip:fetch-channels");
+      });
+      socket.on("zulip:disconnected", () => useStore.getState().setZulipConnected(false));
+      socket.on("zulip:error", ({ message }) => useStore.getState().setZulipError(message));
+      socket.on("zulip:channels", ({ channels }) =>
+        useStore.getState().setZulipChannels(channels),
+      );
+      socket.on("zulip:topics", ({ channelId, topics }) =>
+        useStore.getState().setZulipTopics(channelId, topics),
+      );
+      socket.on("zulip:message", ({ channelId, topicName, message }) =>
+        useStore.getState().appendZulipMessage(channelId, topicName, message),
+      );
+
       socket.connect();
 
       if (!cancelled) setLoading(false);

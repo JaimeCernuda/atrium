@@ -41,6 +41,7 @@ export interface Room {
   ownerEmail?: string;
   locked?: boolean;
   decorations?: OfficeDecoration;
+  zulipStreamId?: number;
 }
 
 /**
@@ -223,6 +224,44 @@ export interface Submission {
   updatedAt: string;
 }
 
+// ───── Zulip integration ─────
+export interface ZulipLinkStatus {
+  linked: boolean;
+  zulipEmail: string | null;
+  zulipUserId?: number;
+  linkedAt?: string; // ISO
+}
+
+export interface ZulipChannel {
+  id: number;          // Zulip stream_id
+  name: string;        // stream name (canonical key for narrows + sending)
+  display_name: string;// description or name, for UI
+  subscribed: boolean;
+}
+
+export interface ZulipTopic {
+  name: string;
+  maxId: number; // max message id in topic
+}
+
+// Zulip messages are surfaced as the existing ChatMessage shape so the
+// frontend MessageList renders them unchanged. createdAt is ISO (server
+// converts Zulip's epoch-seconds). id is the Zulip message id as a string.
+export interface ZulipMessagePayload {
+  channelId: number;
+  topicName: string;
+  message: ChatMessage;
+}
+
+export interface ZulipReactionPayload {
+  channelId: number;
+  topicName: string;
+  messageId: number;
+  emojiName: string;
+  userId: number;
+  op: "add" | "remove";
+}
+
 export type ServerToClientEvents = {
   "presence:snapshot": (state: Record<string, PresenceUser[]>) => void;
   "presence:enter": (evt: PresenceEvent) => void;
@@ -235,6 +274,14 @@ export type ServerToClientEvents = {
 
   "ping:received": (payload: PingPayload) => void;
   "knock:received": (payload: KnockPayload) => void;
+
+  "zulip:connected": () => void;
+  "zulip:disconnected": () => void;
+  "zulip:error": (payload: { message: string }) => void;
+  "zulip:channels": (payload: { channels: ZulipChannel[] }) => void;
+  "zulip:topics": (payload: { channelId: number; topics: ZulipTopic[] }) => void;
+  "zulip:message": (payload: ZulipMessagePayload) => void;
+  "zulip:reaction": (payload: ZulipReactionPayload) => void;
 };
 
 export type ClientToServerEvents = {
@@ -244,4 +291,20 @@ export type ClientToServerEvents = {
 
   "ping:send": (targetUserId: string) => void;
   "knock:send": (roomId: string) => void;
+
+  "zulip:fetch-channels": (
+    cb?: (err: string | null, channels?: ZulipChannel[]) => void,
+  ) => void;
+  "zulip:fetch-topics": (
+    channelId: number,
+    cb?: (err: string | null, topics?: ZulipTopic[]) => void,
+  ) => void;
+  "zulip:fetch-history": (
+    params: { channelId: number; topicName: string; numBefore?: number },
+    cb?: (err: string | null, messages?: ChatMessage[]) => void,
+  ) => void;
+  "zulip:send": (
+    params: { channelId: number; topicName: string; body: string },
+    cb?: (err: string | null, result?: { id: number }) => void,
+  ) => void;
 };

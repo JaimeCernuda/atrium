@@ -5,6 +5,12 @@ import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
 import { requirePermission, userHasPermission } from "./permissions.js";
 
+// Prisma raises P2002 on a unique-constraint violation (here: two rooms bound
+// to the same Zulip stream). We surface that as a 409 instead of a 500.
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
+}
+
 function toApi(room: {
   id: string;
   name: string;
@@ -15,6 +21,7 @@ function toApi(room: {
   ownerEmail: string | null;
   locked: boolean;
   decorations?: unknown;
+  zulipStreamId?: number | null;
 }): Room {
   return {
     id: room.id,
@@ -26,7 +33,19 @@ function toApi(room: {
     ownerEmail: room.ownerEmail ?? undefined,
     locked: room.locked,
     decorations: (room.decorations as OfficeDecoration | null) ?? undefined,
+    zulipStreamId: room.zulipStreamId ?? undefined,
   };
+}
+
+// Normalize an incoming zulipStreamId field. Returns:
+//  - { set: false } when the field is absent (leave column unchanged)
+//  - { set: true, value: number | null } when explicitly provided (null clears)
+function normalizeStreamId(v: unknown): { set: false } | { set: true; value: number | null } {
+  if (v === undefined) return { set: false };
+  if (v === null) return { set: true, value: null };
+  const n = Number(v);
+  if (!Number.isInteger(n) || n <= 0) return { set: true, value: null };
+  return { set: true, value: n };
 }
 
 const COLOR_TO_CATEGORY: Record<string, string> = {
@@ -139,35 +158,53 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       return reply.code(400).send({ error: "id and name required" });
     }
     const maxOrder = await prisma.room.aggregate({ _max: { sortOrder: true } });
-    const created = await prisma.room.create({
-      data: {
-        id: body.id,
-        name: body.name,
-        color: body.color ?? null,
-        category: body.category ?? null,
-        disableMeeting: body.disableMeeting ?? false,
-        externalMeetUrl: body.externalMeetUrl ?? null,
-        sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
-      },
-    });
-    return toApi(created);
+    const stream = normalizeStreamId(body.zulipStreamId);
+    try {
+      const created = await prisma.room.create({
+        data: {
+          id: body.id,
+          name: body.name,
+          color: body.color ?? null,
+          category: body.category ?? null,
+          disableMeeting: body.disableMeeting ?? false,
+          externalMeetUrl: body.externalMeetUrl ?? null,
+          ...(stream.set ? { zulipStreamId: stream.value } : {}),
+          sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
+        },
+      });
+      return toApi(created);
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return reply.code(409).send({ error: "That Zulip channel is already bound to another room." });
+      }
+      throw err;
+    }
   });
 
   app.patch<{ Params: { id: string }; Body: Partial<Room> }>("/api/rooms/:id", async (req, reply) => {
     if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { id } = req.params;
     const body = req.body ?? {};
-    const updated = await prisma.room.update({
-      where: { id },
-      data: {
-        ...(body.name !== undefined && { name: body.name }),
-        ...(body.color !== undefined && { color: body.color ?? null }),
-        ...(body.category !== undefined && { category: body.category ?? null }),
-        ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
-        ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
-      },
-    });
-    return toApi(updated);
+    const stream = normalizeStreamId(body.zulipStreamId);
+    try {
+      const updated = await prisma.room.update({
+        where: { id },
+        data: {
+          ...(body.name !== undefined && { name: body.name }),
+          ...(body.color !== undefined && { color: body.color ?? null }),
+          ...(body.category !== undefined && { category: body.category ?? null }),
+          ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
+          ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
+          ...(stream.set ? { zulipStreamId: stream.value } : {}),
+        },
+      });
+      return toApi(updated);
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return reply.code(409).send({ error: "That Zulip channel is already bound to another room." });
+      }
+      throw err;
+    }
   });
 
   app.delete<{ Params: { id: string } }>("/api/rooms/:id", async (req, reply) => {

@@ -16,6 +16,10 @@ model User {
   role             String            @default("external") // soft ref to Role.id
   createdAt        DateTime          @default(now())
   lastSeenAt       DateTime?
+  zulipEmail       String?           // Zulip email; defaults to Atrium email at link time
+  zulipUserId      Int?              // Zulip internal user id (cache for validation)
+  zulipApiKeyEnc   String?           // AES-256-GCM, base64(salt||iv||tag||ciphertext)
+  zulipLinkedAt    DateTime?         // when the key was last set
   presenceSessions PresenceSession[]
   meetingSessions  MeetingSession[]
   sentMessages     Message[]         @relation("SentMessages")
@@ -46,9 +50,11 @@ model Room {
   ownerEmail      String?
   locked          Boolean  @default(false)
   decorations     Json?
+  zulipStreamId   Int?      // bound Zulip stream; null = spatial-only room
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  @@unique([zulipStreamId])
   @@index([sortOrder])
   @@index([ownerEmail])
 }

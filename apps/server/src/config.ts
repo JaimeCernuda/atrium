@@ -14,6 +14,12 @@ export interface MicrosoftProviderConfig {
   tenant: string;
 }
 
+export interface ZulipConfig {
+  // 64 hex chars (32 bytes) — the key-encryption key for stored Zulip API keys.
+  // When this is absent the entire Zulip integration is inert.
+  keySecret: string;
+}
+
 export interface Config {
   port: number;
   publicUrl: string;
@@ -23,6 +29,7 @@ export interface Config {
   adminEmails: string[];
   google: GoogleProviderConfig | null;
   microsoft: MicrosoftProviderConfig | null;
+  zulip: ZulipConfig | null;
   session: {
     secret: string;
     cookieName: string;
@@ -73,6 +80,18 @@ function loadMicrosoft(): MicrosoftProviderConfig | null {
   };
 }
 
+function loadZulip(): ZulipConfig | null {
+  const secret = process.env.ZULIP_KEY_SECRET;
+  if (!secret) return null;
+  if (!/^[0-9a-fA-F]{64}$/.test(secret)) {
+    // Misconfigured rather than absent: warn loudly but keep the feature inert
+    // instead of crashing the whole server boot.
+    console.warn("[zulip] ZULIP_KEY_SECRET must be 64 hex chars; Zulip features disabled");
+    return null;
+  }
+  return { keySecret: secret };
+}
+
 function pickDefaultRoom(rooms: Room[]): string | null {
   // Explicit env override wins.
   if (process.env.DEFAULT_ROOM_ID) return process.env.DEFAULT_ROOM_ID;
@@ -97,6 +116,7 @@ export function loadConfig(): Config {
     adminEmails: parseWhitelist(process.env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
     google,
     microsoft,
+    zulip: loadZulip(),
     session: {
       secret: required("SESSION_SECRET"),
       cookieName: process.env.SESSION_COOKIE_NAME ?? "atrium_session",

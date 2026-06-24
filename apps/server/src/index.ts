@@ -20,6 +20,7 @@ import { registerBotTokens } from "./bot-tokens.js";
 import { registerSubmissions } from "./submissions.js";
 import { registerRoles, seedRolesIfEmpty } from "./roles.js";
 import { registerMembers } from "./members.js";
+import { registerZulipLink } from "./zulip-link.js";
 
 const config = loadConfig();
 
@@ -43,6 +44,7 @@ await registerBotTokens(app, config);
 await registerSubmissions(app, config);
 await registerRoles(app, config);
 await registerMembers(app, config);
+await registerZulipLink(app, config);
 await seedRoomsIfEmpty(config.rooms);
 await seedRolesIfEmpty();
 await closeOrphanedSessions();
@@ -72,7 +74,7 @@ if (existsSync(staticRoot)) {
 
 await app.listen({ port: config.port, host: "0.0.0.0" });
 
-const { io, broadcaster } = createPresenceServer(app.server);
+const { io, broadcaster } = createPresenceServer(app.server, config);
 broadcasterRef.current = broadcaster;
 io.use((socket, next) => {
   const rawCookie = socket.request.headers.cookie ?? "";

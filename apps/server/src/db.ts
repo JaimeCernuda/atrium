@@ -32,6 +32,70 @@ export async function upsertUser(
   });
 }
 
+// ───── Zulip account linking ─────
+// The API key is stored AES-256-GCM-encrypted (see zulip-crypto.ts). These
+// helpers take/return only the ENCRYPTED form — the plaintext key never enters
+// or leaves the DB layer except through the crypto module at the boundary.
+
+export async function linkZulipAccount(
+  userId: string,
+  data: { zulipEmail: string; zulipUserId: number; zulipApiKeyEnc: string },
+): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      zulipEmail: data.zulipEmail,
+      zulipUserId: data.zulipUserId,
+      zulipApiKeyEnc: data.zulipApiKeyEnc,
+      zulipLinkedAt: new Date(),
+    },
+  });
+}
+
+/** Returns the encrypted key + email for a user, or null if not linked. */
+export async function getZulipKey(
+  userId: string,
+): Promise<{ zulipEmail: string; zulipApiKeyEnc: string; zulipUserId: number | null } | null> {
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { zulipEmail: true, zulipApiKeyEnc: true, zulipUserId: true },
+  });
+  if (!row || !row.zulipApiKeyEnc || !row.zulipEmail) return null;
+  return {
+    zulipEmail: row.zulipEmail,
+    zulipApiKeyEnc: row.zulipApiKeyEnc,
+    zulipUserId: row.zulipUserId,
+  };
+}
+
+export async function unlinkZulipAccount(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      zulipEmail: null,
+      zulipUserId: null,
+      zulipApiKeyEnc: null,
+      zulipLinkedAt: null,
+    },
+  });
+}
+
+/** Link metadata for status display — never includes the key itself. */
+export async function getZulipLink(
+  userId: string,
+): Promise<{ zulipEmail: string | null; zulipUserId: number | null; zulipLinkedAt: Date | null; linked: boolean }> {
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { zulipEmail: true, zulipUserId: true, zulipLinkedAt: true, zulipApiKeyEnc: true },
+  });
+  return {
+    zulipEmail: row?.zulipEmail ?? null,
+    zulipUserId: row?.zulipUserId ?? null,
+    zulipLinkedAt: row?.zulipLinkedAt ?? null,
+    linked: Boolean(row?.zulipApiKeyEnc),
+  };
+}
+
 /** Mark a user as seen now (called on socket connect, not just OAuth login). */
 export async function touchLastSeen(userId: string): Promise<void> {
   await prisma.user.update({

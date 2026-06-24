@@ -6,6 +6,8 @@ import type {
   PresenceUser,
   Room,
   User,
+  ZulipChannel,
+  ZulipTopic,
 } from "@atrium/shared";
 import { loadPrefs, savePrefs, type ThemeMode, type UserPrefs } from "./prefs";
 
@@ -44,11 +46,35 @@ interface AtriumState {
 
   chatOpen: boolean;
   setChatOpen: (open: boolean) => void;
-  chatView: "global" | "dm";
-  setChatView: (v: "global" | "dm") => void;
+  chatView: "global" | "dm" | "zulip";
+  setChatView: (v: "global" | "dm" | "zulip") => void;
   activeDmUser: User | null;
   openDmWith: (user: User) => void;
   closeDm: () => void;
+
+  // ───── Zulip integration ─────
+  zulipLinked: boolean;
+  zulipEmail: string | null;
+  zulipConnected: boolean; // event queue is live
+  zulipError: string | null;
+  zulipLinking: boolean; // a link request is in flight
+  setZulipStatus: (s: { linked: boolean; zulipEmail: string | null }) => void;
+  setZulipConnected: (connected: boolean) => void;
+  setZulipError: (error: string | null) => void;
+  setZulipLinking: (linking: boolean) => void;
+
+  zulipChannels: ZulipChannel[];
+  setZulipChannels: (channels: ZulipChannel[]) => void;
+  zulipTopicsByChannel: Record<number, ZulipTopic[]>;
+  setZulipTopics: (channelId: number, topics: ZulipTopic[]) => void;
+  zulipMessagesByTopic: Record<string, ChatMessage[]>; // key: `${channelId}:${topicName}`
+  setZulipMessages: (channelId: number, topicName: string, msgs: ChatMessage[]) => void;
+  appendZulipMessage: (channelId: number, topicName: string, msg: ChatMessage) => void;
+
+  zulipActiveChannel: number | null;
+  zulipActiveTopic: string | null;
+  setZulipActiveChannel: (channelId: number | null, topicName: string | null) => void;
+  setZulipActiveTopic: (topicName: string | null) => void;
 
   patchUserEverywhere: (user: User) => void;
 
@@ -138,6 +164,51 @@ export const useStore = create<AtriumState>((set) => ({
   activeDmUser: null,
   openDmWith: (u) => set({ chatOpen: true, chatView: "dm", activeDmUser: u }),
   closeDm: () => set({ activeDmUser: null }),
+
+  // ───── Zulip integration ─────
+  zulipLinked: false,
+  zulipEmail: null,
+  zulipConnected: false,
+  zulipError: null,
+  zulipLinking: false,
+  setZulipStatus: ({ linked, zulipEmail }) => set({ zulipLinked: linked, zulipEmail }),
+  setZulipConnected: (zulipConnected) => set({ zulipConnected }),
+  setZulipError: (zulipError) => set({ zulipError }),
+  setZulipLinking: (zulipLinking) => set({ zulipLinking }),
+
+  zulipChannels: [],
+  setZulipChannels: (zulipChannels) => set({ zulipChannels }),
+  zulipTopicsByChannel: {},
+  setZulipTopics: (channelId, topics) =>
+    set((state) => ({
+      zulipTopicsByChannel: { ...state.zulipTopicsByChannel, [channelId]: topics },
+    })),
+  zulipMessagesByTopic: {},
+  setZulipMessages: (channelId, topicName, msgs) =>
+    set((state) => ({
+      zulipMessagesByTopic: {
+        ...state.zulipMessagesByTopic,
+        [`${channelId}:${topicName}`]: msgs,
+      },
+    })),
+  appendZulipMessage: (channelId, topicName, msg) =>
+    set((state) => {
+      const key = `${channelId}:${topicName}`;
+      const prev = state.zulipMessagesByTopic[key] ?? [];
+      if (prev.some((m) => m.id === msg.id)) return state;
+      return {
+        zulipMessagesByTopic: {
+          ...state.zulipMessagesByTopic,
+          [key]: [...prev, msg].slice(-LIMIT),
+        },
+      };
+    }),
+
+  zulipActiveChannel: null,
+  zulipActiveTopic: null,
+  setZulipActiveChannel: (zulipActiveChannel, zulipActiveTopic) =>
+    set({ zulipActiveChannel, zulipActiveTopic }),
+  setZulipActiveTopic: (zulipActiveTopic) => set({ zulipActiveTopic }),
 
   patchUserEverywhere: (u) =>
     set((state) => ({

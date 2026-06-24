@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Avatar,
   Box,
   Button,
+  Chip,
   Drawer,
   IconButton,
   List,
@@ -17,8 +21,11 @@ import {
 import SendIcon from "@mui/icons-material/Send";
 import CloseIcon from "@mui/icons-material/Close";
 import AddIcon from "@mui/icons-material/Add";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import TagIcon from "@mui/icons-material/Tag";
 import type { ChatMessage, User } from "@atrium/shared";
 import { useStore } from "../store";
+import { getSocket } from "../socket";
 import { UserSearchDialog } from "./UserSearchDialog";
 
 const DRAWER_WIDTH = 360;
@@ -114,9 +121,12 @@ export function ChatPanel() {
       <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="fullWidth">
         <Tab value="global" label="Global" />
         <Tab value="dm" label="DMs" />
+        <Tab value="zulip" label="Zulip" />
       </Tabs>
 
-      {tab === "dm" && !activeDmUser ? (
+      {tab === "zulip" ? (
+        <ZulipChannelView meId={me?.id ?? ""} />
+      ) : tab === "dm" && !activeDmUser ? (
         <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
           <Box sx={{ p: 1.5 }}>
             <Button
@@ -227,6 +237,176 @@ function MessageList({ messages, meId }: { messages: ChatMessage[]; meId: string
         <div ref={bottomRef} />
       </Stack>
     </Box>
+  );
+}
+
+function ZulipChannelView({ meId }: { meId: string }) {
+  const linked = useStore((s) => s.zulipLinked);
+  const connected = useStore((s) => s.zulipConnected);
+  const error = useStore((s) => s.zulipError);
+  const channels = useStore((s) => s.zulipChannels);
+  const activeChannel = useStore((s) => s.zulipActiveChannel);
+  const activeTopic = useStore((s) => s.zulipActiveTopic);
+  const messagesByTopic = useStore((s) => s.zulipMessagesByTopic);
+  const setActiveChannel = useStore((s) => s.setZulipActiveChannel);
+  const setActiveTopic = useStore((s) => s.setZulipActiveTopic);
+  const setTopics = useStore((s) => s.setZulipTopics);
+  const setMessages = useStore((s) => s.setZulipMessages);
+
+  // When a channel+topic is active, load its history once.
+  useEffect(() => {
+    if (activeChannel == null || activeTopic == null) return;
+    const key = `${activeChannel}:${activeTopic}`;
+    if (messagesByTopic[key]) return;
+    getSocket().emit(
+      "zulip:fetch-history",
+      { channelId: activeChannel, topicName: activeTopic },
+      (err, msgs) => {
+        if (!err && msgs) setMessages(activeChannel, activeTopic, msgs);
+      },
+    );
+  }, [activeChannel, activeTopic, messagesByTopic, setMessages]);
+
+  if (!linked) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Typography variant="body2" color="text.secondary">
+          Zulip is not connected yet. Open <strong>Settings</strong> and choose{" "}
+          <strong>Connect Zulip</strong> to bring your channels into Atrium.
+        </Typography>
+      </Box>
+    );
+  }
+
+  const loadTopics = (channelId: number) => {
+    getSocket().emit("zulip:fetch-topics", channelId, (err, topics) => {
+      if (!err && topics) setTopics(channelId, topics);
+    });
+  };
+
+  const send = (body: string) => {
+    if (activeChannel == null || activeTopic == null) return;
+    getSocket().emit("zulip:send", { channelId: activeChannel, topicName: activeTopic, body });
+  };
+
+  const activeKey = activeChannel != null && activeTopic != null ? `${activeChannel}:${activeTopic}` : null;
+  const messages = activeKey ? messagesByTopic[activeKey] ?? [] : [];
+
+  // A topic is open: show its message stream + composer.
+  if (activeChannel != null && activeTopic != null) {
+    const channel = channels.find((c) => c.id === activeChannel);
+    return (
+      <>
+        <Stack direction="row" alignItems="center" sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
+          <IconButton size="small" onClick={() => setActiveChannel(activeChannel, null)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+          <TagIcon fontSize="small" sx={{ mx: 0.5, color: "text.secondary" }} />
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {channel?.name ?? activeChannel}
+          </Typography>
+          <Chip label={activeTopic} size="small" sx={{ ml: 1 }} />
+        </Stack>
+        <MessageList messages={messages} meId={meId} />
+        <Composer disabled={!connected} onSend={send} />
+      </>
+    );
+  }
+
+  // Channel/topic browser.
+  return (
+    <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
+      {error && (
+        <Box sx={{ px: 2, pt: 1.5 }}>
+          <Typography variant="caption" color="error">
+            {error}
+          </Typography>
+        </Box>
+      )}
+      {!connected && (
+        <Box sx={{ px: 2, pt: 1.5 }}>
+          <Typography variant="caption" color="text.secondary">
+            Connecting to Zulip…
+          </Typography>
+        </Box>
+      )}
+      {channels.length === 0 ? (
+        <Box sx={{ p: 3 }}>
+          <Typography variant="body2" color="text.secondary">
+            No channels loaded yet.
+          </Typography>
+        </Box>
+      ) : (
+        channels.map((c) => (
+          <ChannelAccordion
+            key={c.id}
+            channelId={c.id}
+            name={c.name}
+            subscribed={c.subscribed}
+            onExpand={() => loadTopics(c.id)}
+            onPickTopic={(topic) => {
+              setActiveChannel(c.id, topic);
+              setActiveTopic(topic);
+            }}
+          />
+        ))
+      )}
+    </Box>
+  );
+}
+
+function ChannelAccordion({
+  channelId,
+  name,
+  subscribed,
+  onExpand,
+  onPickTopic,
+}: {
+  channelId: number;
+  name: string;
+  subscribed: boolean;
+  onExpand: () => void;
+  onPickTopic: (topic: string) => void;
+}) {
+  const topics = useStore((s) => s.zulipTopicsByChannel[channelId]);
+  return (
+    <Accordion
+      disableGutters
+      square
+      elevation={0}
+      onChange={(_, expanded) => {
+        if (expanded && !topics) onExpand();
+      }}
+      sx={{ "&:before": { display: "none" }, borderBottom: 1, borderColor: "divider" }}
+    >
+      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+        <TagIcon fontSize="small" sx={{ mr: 1, color: subscribed ? "primary.main" : "text.disabled" }} />
+        <Typography variant="body2" sx={{ fontWeight: subscribed ? 600 : 400 }}>
+          {name}
+        </Typography>
+      </AccordionSummary>
+      <AccordionDetails sx={{ p: 0 }}>
+        {!topics ? (
+          <Typography variant="caption" color="text.secondary" sx={{ px: 2, py: 1, display: "block" }}>
+            Loading topics…
+          </Typography>
+        ) : topics.length === 0 ? (
+          <Typography variant="caption" color="text.secondary" sx={{ px: 2, py: 1, display: "block" }}>
+            No topics yet.
+          </Typography>
+        ) : (
+          <List dense disablePadding>
+            {topics.map((t) => (
+              <ListItemButton key={t.name} onClick={() => onPickTopic(t.name)} sx={{ pl: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {t.name}
+                </Typography>
+              </ListItemButton>
+            ))}
+          </List>
+        )}
+      </AccordionDetails>
+    </Accordion>
   );
 }
 

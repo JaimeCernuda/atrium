@@ -15,6 +15,8 @@ import {
   touchLastSeen,
 } from "./db.js";
 import { findRoomOwnedBy, isRoomEnterableBy } from "./rooms.js";
+import type { Config } from "./config.js";
+import { ZulipManager } from "./zulip-manager.js";
 
 type PresenceIO = IOServer<ClientToServerEvents, ServerToClientEvents, object, { user: User }>;
 
@@ -24,7 +26,10 @@ export interface Broadcaster {
   broadcastUserUpdate: (user: User) => void;
 }
 
-export function createPresenceServer(httpServer: HttpServer): {
+export function createPresenceServer(
+  httpServer: HttpServer,
+  config: Config,
+): {
   io: PresenceIO;
   broadcaster: Broadcaster;
 } {
@@ -36,6 +41,31 @@ export function createPresenceServer(httpServer: HttpServer): {
   const users = new Map<string, PresenceUser>();
   const socketByUser = new Map<string, Set<string>>();
 
+  function socketsForUser(userId: string): string[] {
+    return Array.from(socketByUser.get(userId) ?? []);
+  }
+
+  // One per-user Zulip event-queue manager for the whole server. Fan-out is
+  // scoped to the originating user's sockets only — Zulip data never leaks
+  // across users.
+  const zulip = new ZulipManager(config, {
+    onConnected: (userId) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:connected");
+    },
+    onDisconnected: (userId) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:disconnected");
+    },
+    onError: (userId, message) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:error", { message });
+    },
+    onMessage: (userId, payload) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:message", payload);
+    },
+    onReaction: (userId, payload) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:reaction", payload);
+    },
+  });
+
   function snapshot(): Record<string, PresenceUser[]> {
     const by: Record<string, PresenceUser[]> = {};
     for (const [userId, roomId] of userRoom) {
@@ -44,10 +74,6 @@ export function createPresenceServer(httpServer: HttpServer): {
       (by[roomId] ??= []).push(u);
     }
     return by;
-  }
-
-  function socketsForUser(userId: string): string[] {
-    return Array.from(socketByUser.get(userId) ?? []);
   }
 
   function moveUserToRoom(userId: string, roomId: string): void {
@@ -89,6 +115,74 @@ export function createPresenceServer(httpServer: HttpServer): {
       }
     }
     socket.emit("presence:snapshot", snapshot());
+
+    // Start (or attach to) this user's Zulip event queue. acquire() emits
+    // zulip:connected via the fan-out once the queue registers; the client
+    // fetches channels from inside its zulip:connected handler.
+    zulip.acquire(user.id).catch((err) => console.error("zulip acquire", err));
+
+    socket.on("zulip:fetch-channels", async (cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      try {
+        const channels = await client.fetchChannels();
+        socket.emit("zulip:channels", { channels });
+        cb?.(null, channels);
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "fetch-channels failed");
+      }
+    });
+
+    socket.on("zulip:fetch-topics", async (channelId, cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      try {
+        const topics = await client.fetchTopics(channelId);
+        socket.emit("zulip:topics", { channelId, topics });
+        cb?.(null, topics);
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "fetch-topics failed");
+      }
+    });
+
+    socket.on("zulip:fetch-history", async ({ channelId, topicName, numBefore }, cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      try {
+        const messages = await client.fetchHistory(channelId, topicName, numBefore);
+        cb?.(null, messages);
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "fetch-history failed");
+      }
+    });
+
+    socket.on("zulip:send", async ({ channelId, topicName, body }, cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      const trimmed = (body ?? "").trim();
+      if (!trimmed) {
+        cb?.("empty message");
+        return;
+      }
+      try {
+        const result = await client.sendMessage(channelId, topicName, trimmed);
+        cb?.(null, result);
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "send failed");
+      }
+    });
 
     socket.on("presence:join", async (roomId) => {
       const check = await isRoomEnterableBy(roomId, user.email);
@@ -136,6 +230,10 @@ export function createPresenceServer(httpServer: HttpServer): {
     });
 
     socket.on("disconnect", () => {
+      // Balance the acquire() above for every socket; the manager refcounts and
+      // tears down the Zulip queue when the user's last socket goes away.
+      zulip.release(user.id);
+
       const userSockets = socketByUser.get(user.id);
       userSockets?.delete(socket.id);
       if (userSockets && userSockets.size > 0) return;
