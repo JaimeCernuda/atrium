@@ -1,6 +1,13 @@
 import { EventEmitter } from "node:events";
 import type { ChatMessage, ZulipChannel, ZulipTopic, ZulipUser, ZulipUserGroup } from "@atrium/shared";
-import { participantKey } from "@atrium/shared";
+
+// Inlined from @atrium/shared. That package ships TS source and cannot be
+// `require`d at runtime by the compiled server (same reason submissions.ts
+// inlines SUBMISSION_RESOURCES). MUST stay byte-identical to shared's
+// participantKey so server- and web-derived DM conversation keys match.
+function participantKey(ids: number[]): string {
+  return [...new Set(ids)].sort((a, b) => a - b).join(",");
+}
 
 // Fixed Zulip Cloud realm for the Gnosis Research Center org.
 export const ZULIP_REALM = "https://grc.zulipchat.com";
