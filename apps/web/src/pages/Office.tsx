@@ -44,7 +44,12 @@ export function Office() {
   const navigate = useNavigate();
   useNotifications();
 
-  const byZone = useMemo(() => groupByZone(rooms), [rooms]);
+  // A superseded room (a "Papers" research room replaced by a per-student desk)
+  // is HIDDEN from the floorplan — never deleted. Filtering here, before
+  // grouping, is the single source of truth for the reversible `superseded`
+  // flag and keeps superseded rooms out of every zone (including "other").
+  const visibleRooms = useMemo(() => rooms.filter((r) => !r.superseded), [rooms]);
+  const byZone = useMemo(() => groupByZone(visibleRooms), [visibleRooms]);
 
   const enterRoom = (roomId: string) => {
     getSocket().emit("presence:join", roomId);

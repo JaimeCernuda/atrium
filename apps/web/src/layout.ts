@@ -52,10 +52,10 @@ export function zoneFor(room: Room): Zone {
   if (cat === "offices") return "offices";
   if (cat === "academic") return "status";
   if (cat === "common") return "entry";
-  // A "Papers" research room superseded by a per-student desk falls through to
-  // "other" (un-rendered, never deleted). Reversible: PATCH superseded:false to
-  // restore it, mirroring the SHOW_PROJECTS switch.
-  if (cat === "papers" && room.superseded) return "other";
+  // Superseded rooms (a "Papers" research room replaced by a per-student desk)
+  // are filtered out before grouping in Office.tsx, so they never reach zoneFor.
+  // The flag is reversible: PATCH superseded:false to restore the room to its
+  // research zone, mirroring the SHOW_PROJECTS switch.
   // Projects are superseded by Desks unless explicitly re-enabled. When
   // SHOW_PROJECTS is false, "projects" rooms fall through to "other".
   const researchCats = SHOW_PROJECTS

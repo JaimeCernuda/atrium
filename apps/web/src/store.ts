@@ -138,7 +138,10 @@ interface AtriumState {
   removeZulipUnreadTopic: (key: string) => void;
   addZulipUnreadDm: (key: string) => void;
   removeZulipUnreadDm: (key: string) => void;
-  // Count of unread Global-mapped messages while the Global tab isn't focused.
+  // Presence flag (0/1) for the Global-mapped channel:topic having unread
+  // traffic while the Global tab isn't focused. Kept 0/1 — not a per-message
+  // tally — so the live path and the /register snapshot agree on magnitude and
+  // the header total mixes like-for-like with the per-topic channel count.
   zulipUnreadGlobal: number;
   addZulipUnreadGlobal: () => void;
   removeZulipUnreadGlobal: () => void;
@@ -387,8 +390,10 @@ export const useStore = create<AtriumState>((set, get) => ({
     }),
 
   zulipUnreadGlobal: 0,
+  // Set-to-1 (presence), not increment — matches the 0/1 semantics of the
+  // /register snapshot seed below so live + snapshot never disagree.
   addZulipUnreadGlobal: () =>
-    set((state) => ({ zulipUnreadGlobal: state.zulipUnreadGlobal + 1 })),
+    set((state) => (state.zulipUnreadGlobal === 1 ? state : { zulipUnreadGlobal: 1 })),
   removeZulipUnreadGlobal: () =>
     set((state) => (state.zulipUnreadGlobal === 0 ? state : { zulipUnreadGlobal: 0 })),
 

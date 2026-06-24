@@ -41,27 +41,49 @@ const SHARED_CATEGORY = "Projects";
 const SHARED_COLOR = "#388e3c";
 const SHARED_PROJECTS = ["Agentic", "IOWarp", "Jarvis", "ChronoLog", "Paper Reading"];
 
-// Per-student desk -> project channel(s). Jie Ye's single desk binds both DyTO
-// and Pythia (Pythia is folded into Jie's desk, not a standalone desk). Izzet's
-// desk has no channel bound.
-const STUDENT_DESK_BINDINGS: { studentName: string; channelNames: string[] }[] = [
+// Per-student desk -> project channel(s) + the research ("Papers") room they
+// supersede. Jie Ye's single desk binds both DyTO and Pythia (Pythia is folded
+// into Jie's desk, not a standalone desk). Izzet's desk has no channel bound.
+//
+// channelNames are the LIVE Zulip channel spellings (used for binding). Two
+// channels can't be bridged from the room name by normalization alone: the live
+// channel is "FineTunning" (the "Papers" room is "Fine-Tuning" — a real spelling
+// difference, not just punctuation) and "Lobotomy" (the room is "KV_Lobotomy" —
+// a dropped "KV_" prefix). projectRoomNames carries the room-name spelling(s)
+// used to find and hide the matching "Papers" room. When omitted, channelNames
+// double as the room-name match (e.g. Coeus, Acropolis).
+const STUDENT_DESK_BINDINGS: {
+  studentName: string;
+  channelNames: string[];
+  projectRoomNames?: string[];
+}[] = [
   { studentName: "Rajni Pawar", channelNames: ["Acropolis"] },
   { studentName: "Neeraj Rajesh", channelNames: ["Aneris"] },
   { studentName: "Hua Xu", channelNames: ["Coeus"] },
   { studentName: "Keith Bateman", channelNames: ["DTIO"] },
   { studentName: "Jie Ye", channelNames: ["DyTO", "Pythia"] },
-  { studentName: "Shazzadul Islam", channelNames: ["Fine-Tuning"] },
+  {
+    studentName: "Shazzadul Islam",
+    channelNames: ["FineTunning"],
+    projectRoomNames: ["Fine-Tuning", "Fine-Tunning"],
+  },
   { studentName: "Isa Muradli", channelNames: ["GPUCompress"] },
-  { studentName: "Zia Uddin Chowdhury", channelNames: ["KV_Lobotomy"] },
+  {
+    studentName: "Zia Uddin Chowdhury",
+    channelNames: ["Lobotomy"],
+    projectRoomNames: ["KV_Lobotomy", "Lobotomy"],
+  },
   { studentName: "Meng Tang", channelNames: ["Widget"] },
   { studentName: "Izzet Yildirim", channelNames: [] },
 ];
 
 // Match Zulip channels & students by a loose key: case-insensitive, with spaces/
 // hyphens/underscores and parenthetical suffixes ("(Candice)") stripped — so
-// Fine-Tuning<->Fine-Tunning, KV_Lobotomy<->Lobotomy, WIDGET<->Widget and
-// "Meng Tang (Candice)"<->"Meng Tang" all resolve. Strip parentheticals BEFORE
-// collapsing whitespace so the surrounding space vanishes cleanly.
+// WIDGET<->Widget and "Meng Tang (Candice)"<->"Meng Tang" resolve. Spelling/prefix
+// differences (Fine-Tuning vs FineTunning, KV_Lobotomy vs Lobotomy) that
+// normalization can't bridge are handled by the explicit channelNames /
+// projectRoomNames above. Strip parentheticals BEFORE collapsing whitespace so
+// the surrounding space vanishes cleanly.
 function normalizeForMatch(s: string): string {
   return s
     .toLowerCase()
@@ -325,13 +347,15 @@ export function AdminRooms() {
       }
 
       // Supersede the matching "Papers" research room (hide, reversible) once
-      // this student has a desk. The room is named after the PROJECT/channel
-      // (e.g. "Coeus"), not the student, so match against the channel names.
+      // this student has a desk. The room is named after the PROJECT (e.g.
+      // "Coeus", "Fine-Tuning", "KV_Lobotomy"), not the student, so match against
+      // projectRoomNames when given, else fall back to the channel names.
       // Idempotent: PATCH superseded:true only when not already set.
+      const roomMatchNames = b.projectRoomNames ?? b.channelNames;
       const papersRoom = nonDeskRooms.find(
         (r) =>
           (r.category ?? "").toLowerCase() === "papers" &&
-          b.channelNames.some(
+          roomMatchNames.some(
             (cn) => normalizeForMatch(r.name) === normalizeForMatch(cn),
           ),
       );
