@@ -37,7 +37,6 @@ export function Office() {
   const currentRoomId = useStore((s) => s.currentRoomId);
   const setCurrentRoomId = useStore((s) => s.setCurrentRoomId);
   const openDmWith = useStore((s) => s.openDmWith);
-  const setZulipActiveChannel = useStore((s) => s.setZulipActiveChannel);
   const navigate = useNavigate();
   useNotifications();
 
@@ -46,13 +45,6 @@ export function Office() {
   const enterRoom = (roomId: string) => {
     getSocket().emit("presence:join", roomId);
     setCurrentRoomId(roomId);
-    // If this spatial room is bound to a Zulip channel, surface it: open the
-    // chat drawer on the Zulip tab focused on that channel (topic unselected).
-    const room = rooms.find((r) => r.id === roomId);
-    if (room?.zulipStreamId != null) {
-      setZulipActiveChannel(room.zulipStreamId, null);
-      navigate("/zulip");
-    }
   };
 
   const onDmUser = (target: PresenceUser | User) => {

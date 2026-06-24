@@ -18,6 +18,7 @@ import ArticleIcon from "@mui/icons-material/Article";
 import HeadsetMicIcon from "@mui/icons-material/HeadsetMic";
 import MeetingRoomIcon from "@mui/icons-material/MeetingRoom";
 import VideocamIcon from "@mui/icons-material/Videocam";
+import ForumIcon from "@mui/icons-material/Forum";
 import CheckIcon from "@mui/icons-material/Check";
 import DoorbellIcon from "@mui/icons-material/Doorbell";
 import LockIcon from "@mui/icons-material/Lock";
@@ -45,7 +46,21 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   const me = useStore((s) => s.user);
   const setRooms = useStore((s) => s.setRooms);
   const rooms = useStore((s) => s.rooms);
+  const setZulipActiveChannel = useStore((s) => s.setZulipActiveChannel);
+  const zulipChannels = useStore((s) => s.zulipChannels);
   const navigate = useNavigate();
+
+  const zulipChannel =
+    room.zulipStreamId != null
+      ? zulipChannels.find((c) => c.id === room.zulipStreamId)
+      : undefined;
+
+  const openInZulip = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (room.zulipStreamId == null) return;
+    setZulipActiveChannel(room.zulipStreamId, null);
+    navigate("/zulip");
+  };
 
   const isOwner = !!me?.email && room.ownerEmail === me.email;
   const locked = !!room.locked;
@@ -178,6 +193,22 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           )}
         </Stack>
       </Stack>
+
+      {/* This room is bound to a Zulip channel — offer a jump into it. */}
+      {room.zulipStreamId != null && (
+        <Box sx={{ mt: 0.5 }}>
+          <Tooltip title="Jump to this room's channel in the Zulip client">
+            <Chip
+              icon={<ForumIcon sx={{ fontSize: 14 }} />}
+              label={zulipChannel ? `# ${zulipChannel.name} in Zulip` : "Open in Zulip"}
+              size="small"
+              clickable
+              onClick={openInZulip}
+              sx={{ fontSize: 11, height: 22, maxWidth: "100%" }}
+            />
+          </Tooltip>
+        </Box>
+      )}
 
       {/* Motto line */}
       {deco?.motto && (

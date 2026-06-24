@@ -7,6 +7,16 @@ import type { ChatMessage } from "@atrium/shared";
 // Zulip already sanitizes server-side; DOMPurify is defense-in-depth before we
 // hand raw HTML to dangerouslySetInnerHTML. Strict allowlist — no script/style,
 // no event handlers, no forms.
+// Force every link (not just the upload-rewritten ones) to open in a new tab
+// with a safe rel, closing reverse-tabnabbing on all message links. Registered
+// once at module load — never inside render.
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A" && node.hasAttribute("href")) {
+    node.setAttribute("rel", "noopener noreferrer");
+    node.setAttribute("target", "_blank");
+  }
+});
+
 const SANITIZE_CONFIG = {
   ALLOWED_TAGS: [
     "p", "br", "strong", "b", "em", "i", "u", "s", "strike", "del",
