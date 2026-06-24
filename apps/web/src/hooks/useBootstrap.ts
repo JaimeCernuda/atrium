@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ChatMessage, Room, User, ZulipLinkStatus } from "@atrium/shared";
+import type { ChatMessage, GlobalChatConfig, Room, User, ZulipLinkStatus } from "@atrium/shared";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
 
@@ -58,6 +58,15 @@ export function useBootstrap(): { loading: boolean } {
           linked: status.linked,
           zulipEmail: status.zulipEmail,
         });
+        useStore.getState().setZulipSelfId(status.zulipUserId ?? null);
+      }
+
+      // Seed the Global -> Zulip channel+topic mapping so the client knows which
+      // live zulip:message events to mirror into the Global view.
+      const globalCfgRes = await fetch("/api/admin/global-settings", { credentials: "include" });
+      if (globalCfgRes.ok && !cancelled) {
+        const cfg = (await globalCfgRes.json()) as GlobalChatConfig;
+        useStore.getState().setGlobalZulipConfig(cfg.channelId, cfg.topicName);
       }
 
       const socket = getSocket();
@@ -110,9 +119,10 @@ export function useBootstrap(): { loading: boolean } {
         const store = useStore.getState();
         store.setZulipConnected(true);
         store.setZulipError(null);
-        // Fetch channels only once the queue is live; emitting before connect
-        // would be dropped (autoConnect is off until socket.connect()).
+        // Fetch channels + org members only once the queue is live; emitting
+        // before connect would be dropped (autoConnect is off until connect()).
         socket.emit("zulip:fetch-channels");
+        socket.emit("zulip:fetch-users");
       });
       socket.on("zulip:disconnected", () => useStore.getState().setZulipConnected(false));
       socket.on("zulip:error", ({ message }) => useStore.getState().setZulipError(message));
@@ -122,8 +132,18 @@ export function useBootstrap(): { loading: boolean } {
       socket.on("zulip:topics", ({ channelId, topics }) =>
         useStore.getState().setZulipTopics(channelId, topics),
       );
-      socket.on("zulip:message", ({ channelId, topicName, message }) =>
-        useStore.getState().appendZulipMessage(channelId, topicName, message),
+      socket.on("zulip:message", ({ channelId, topicName, message }) => {
+        const s = useStore.getState();
+        s.appendZulipMessage(channelId, topicName, message);
+        // Mirror into the Global view when this channel+topic is the configured
+        // Global mapping (reuses the existing global message path, no new event).
+        if (channelId === s.globalZulipChannelId && topicName === s.globalZulipTopicName) {
+          s.appendGlobalMessage(message);
+        }
+      });
+      socket.on("zulip:users", ({ users }) => useStore.getState().setZulipUsers(users));
+      socket.on("zulip:dm", ({ participantKey, message }) =>
+        useStore.getState().appendZulipDmMessage(participantKey, message),
       );
 
       socket.connect();

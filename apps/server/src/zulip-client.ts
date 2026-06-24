@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
-import type { ChatMessage, ZulipChannel, ZulipTopic } from "@atrium/shared";
+import type { ChatMessage, ZulipChannel, ZulipTopic, ZulipUser } from "@atrium/shared";
+import { participantKey } from "@atrium/shared";
 
 // Fixed Zulip Cloud realm for the Gnosis Research Center org.
 export const ZULIP_REALM = "https://grc.zulipchat.com";
@@ -24,6 +25,18 @@ interface ZulipRawMessage {
   stream_id?: number;
   subject?: string; // topic name (Zulip's legacy field name for topic)
   type: string; // "stream" | "private"
+  // For private (direct) messages, the recipients are an array of user objects.
+  // Zulip's older formats sometimes send a comma-string; we only read the array.
+  display_recipient?: Array<{ id: number; email: string; full_name: string }> | string;
+}
+
+interface ZulipMember {
+  user_id: number;
+  email: string;
+  full_name: string;
+  avatar_url: string | null;
+  is_bot: boolean;
+  is_active: boolean;
 }
 
 interface ZulipSubscription {
@@ -116,6 +129,11 @@ export interface ZulipQueueClientEvents {
     userId: number;
     op: "add" | "remove";
   }) => void;
+  dm: (payload: {
+    participantKey: string;
+    participantIds: number[];
+    message: ChatMessage;
+  }) => void;
 }
 
 /**
@@ -133,6 +151,9 @@ export class ZulipQueueClient extends EventEmitter {
   constructor(
     private readonly email: string,
     apiKey: string,
+    // This client's own Zulip user id. Used to build the full participant set
+    // for direct messages so server-emitted keys match client-requested keys.
+    private readonly selfUserId: number,
   ) {
     super();
     this.auth = basicAuthHeader(email, apiKey);
@@ -245,6 +266,58 @@ export class ZulipQueueClient extends EventEmitter {
     return { id: res.id };
   }
 
+  // ───── Direct messages + org members ─────
+
+  /** All active, human org members (bots and deactivated users excluded). */
+  async fetchAllUsers(): Promise<ZulipUser[]> {
+    const res = (await this.request("/users")) as { members: ZulipMember[] };
+    return res.members
+      .filter((m) => !m.is_bot && m.is_active)
+      .map((m) => ({
+        zulipUserId: m.user_id,
+        atriumUserId: null, // presence.ts fills this in via email match
+        name: m.full_name,
+        email: m.email,
+        imageUrl: m.avatar_url ?? undefined,
+      }));
+  }
+
+  /**
+   * Send a direct message to one (1:1) or more (group DM) recipients.
+   * `recipientIds` may include this user's own id; Zulip ignores self.
+   */
+  async sendDirectMessage(recipientIds: number[], body: string): Promise<{ id: number }> {
+    const params = new URLSearchParams({
+      type: "direct",
+      to: JSON.stringify(recipientIds),
+      content: body,
+    });
+    const res = (await this.request("/messages", { method: "POST", body: params })) as {
+      id: number;
+    };
+    return { id: res.id };
+  }
+
+  /** History for a direct-message conversation, oldest-first for rendering. */
+  async fetchDirectMessageHistory(
+    recipientIds: number[],
+    numBefore = 50,
+  ): Promise<ChatMessage[]> {
+    // "dm" is the current narrow operator; "pm-with" is deprecated.
+    const narrow = JSON.stringify([{ operator: "dm", operand: recipientIds }]);
+    const params = new URLSearchParams({
+      anchor: "newest",
+      num_before: String(numBefore),
+      num_after: "0",
+      narrow,
+      apply_markdown: "false",
+    });
+    const res = (await this.request(`/messages?${params.toString()}`)) as {
+      messages: ZulipRawMessage[];
+    };
+    return res.messages.map(toChatMessage);
+  }
+
   // ───── Long-poll event loop ─────
 
   async start(): Promise<void> {
@@ -331,6 +404,19 @@ export class ZulipQueueClient extends EventEmitter {
       this.emit("message", {
         channelId: m.stream_id,
         topicName: m.subject ?? "",
+        message: toChatMessage(m),
+      });
+    } else if (ev.type === "message" && ev.message && ev.message.type === "private") {
+      const m = ev.message;
+      // display_recipient is the canonical participant list (array of user
+      // objects). Union with sender + self so the key is the full conversation
+      // set regardless of which side sent the message.
+      const dr = Array.isArray(m.display_recipient) ? m.display_recipient : [];
+      const ids = [this.selfUserId, m.sender_id, ...dr.map((u) => u.id)];
+      const key = participantKey(ids);
+      this.emit("dm", {
+        participantKey: key,
+        participantIds: key.split(",").map(Number),
         message: toChatMessage(m),
       });
     } else if (ev.type === "reaction" && typeof ev.message_id === "number") {

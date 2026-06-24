@@ -59,6 +59,23 @@ export function Office() {
   };
 
   const onDmUser = (target: PresenceUser | User) => {
+    const s = useStore.getState();
+    // When Zulip is linked, route DMs through Zulip (the unified DM surface).
+    // Match the office user to a Zulip member by Atrium id or email.
+    if (s.zulipLinked && s.zulipSelfId != null) {
+      const zu = s.zulipUsers.find(
+        (u) =>
+          u.atriumUserId === target.id ||
+          u.email.toLowerCase() === target.email.toLowerCase(),
+      );
+      if (zu) {
+        s.setZulipActiveDmParticipants([s.zulipSelfId, zu.zulipUserId]);
+        s.setChatView("zulip-dm");
+        s.setChatOpen(true);
+        return;
+      }
+      s.setZulipError("That person isn't in the Zulip org yet.");
+    }
     openDmWith({
       id: target.id,
       name: target.name,

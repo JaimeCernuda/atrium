@@ -169,3 +169,13 @@ model BotToken {
 
   @@index([tokenHash])
 }
+
+// Org-wide singleton settings. Currently holds the Global-chat -> Zulip
+// channel+topic mapping (admin-editable at /admin/global). Always exactly one
+// row, id "singleton".
+model Settings {
+  id                   String   @id @default("singleton")
+  globalZulipChannelId Int?
+  globalZulipTopicName String?
+  updatedAt            DateTime @updatedAt
+}

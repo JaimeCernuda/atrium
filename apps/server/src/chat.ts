@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ChatMessage, User } from "@atrium/shared";
-import { prisma } from "./db.js";
+import type { ChatMessage, GlobalChatConfig, User } from "@atrium/shared";
+import { getGlobalChatConfig, prisma, setGlobalChatConfig } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
+import { requirePermission } from "./permissions.js";
+import type { ZulipManager } from "./zulip-manager.js";
 
 type RawMessage = {
   id: string;
@@ -38,6 +40,12 @@ export async function registerChat(
   app: FastifyInstance,
   config: Config,
   broadcaster: { current: ChatBroadcaster | null },
+  // The same ZulipManager instance the presence layer uses. Resolved lazily via
+  // a ref because the presence server (and its manager) is built after routes
+  // are registered. When set + a global mapping exists + the poster is linked,
+  // the "Global" chat reads/writes the configured Zulip channel+topic instead of
+  // the internal Message table.
+  zulipRef: { current: ZulipManager | null } = { current: null },
 ): Promise<void> {
   async function user(req: FastifyRequest, reply: FastifyReply): Promise<User | null> {
     return requireUser(req, reply, config.session.cookieName);
@@ -46,8 +54,23 @@ export async function registerChat(
   app.get<{ Querystring: { before?: string; limit?: string } }>(
     "/api/chat/global",
     async (req, reply) => {
-      if (!(await user(req, reply))) return reply;
+      const me = await user(req, reply);
+      if (!me) return reply;
       const limit = Math.min(Number(req.query.limit ?? 50), 200);
+      // When Global is mapped to a Zulip channel+topic and the viewer is linked,
+      // read the live Zulip history. Unlinked viewers fall through to the
+      // internal Message table so they aren't blocked.
+      const cfg = await getGlobalChatConfig();
+      if (cfg.channelId != null && cfg.topicName) {
+        const client = zulipRef.current?.get(me.id);
+        if (client) {
+          try {
+            return await client.fetchHistory(cfg.channelId, cfg.topicName, limit);
+          } catch {
+            return [];
+          }
+        }
+      }
       const before = req.query.before ? new Date(req.query.before) : undefined;
       const rows = await prisma.message.findMany({
         where: {
@@ -69,6 +92,20 @@ export async function registerChat(
     const body = (req.body?.body ?? "").trim();
     if (!body) return reply.code(400).send({ error: "body required" });
     if (body.length > 2000) return reply.code(400).send({ error: "message too long" });
+    // When Global is mapped + the poster is linked, post to Zulip. The live echo
+    // arrives via the zulip:message event, which the client mirrors into Global.
+    const cfg = await getGlobalChatConfig();
+    const client = zulipRef.current?.get(me.id);
+    if (cfg.channelId != null && cfg.topicName && client) {
+      try {
+        await client.sendMessage(cfg.channelId, cfg.topicName, body);
+        return reply.code(202).send({ ok: true });
+      } catch (err) {
+        return reply
+          .code(502)
+          .send({ error: err instanceof Error ? err.message : "Zulip send failed" });
+      }
+    }
     const msg = await prisma.message.create({
       data: { senderId: me.id, recipientId: null, roomId: null, body },
       include: { sender: { select: SENDER_SELECT } },
@@ -76,6 +113,28 @@ export async function registerChat(
     const apiMsg = toApi(msg);
     broadcaster.current?.emitGlobal(apiMsg);
     return apiMsg;
+  });
+
+  // ───── Admin: Global-chat -> Zulip channel+topic mapping ─────
+  // GET is readable by any authenticated user (non-sensitive: a channel id +
+  // topic name) so the client can seed its global mapping during bootstrap.
+  // PATCH is gated by manage_rooms.
+  app.get("/api/admin/global-settings", async (req, reply) => {
+    if (!(await user(req, reply))) return reply;
+    return await getGlobalChatConfig();
+  });
+
+  app.patch<{ Body: GlobalChatConfig }>("/api/admin/global-settings", async (req, reply) => {
+    if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName)))
+      return reply;
+    const rawChannel = req.body?.channelId;
+    const channelId =
+      typeof rawChannel === "number" && Number.isInteger(rawChannel) && rawChannel > 0
+        ? rawChannel
+        : null;
+    const topicName = (req.body?.topicName ?? "").trim() || null;
+    await setGlobalChatConfig(channelId, topicName);
+    return await getGlobalChatConfig();
   });
 
   app.get<{ Params: { userId: string }; Querystring: { before?: string; limit?: string } }>(

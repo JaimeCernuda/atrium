@@ -12,11 +12,12 @@ import {
   closePresenceSessions,
   openMeetingSession,
   openPresenceSession,
+  prisma,
   touchLastSeen,
 } from "./db.js";
 import { findRoomOwnedBy, isRoomEnterableBy } from "./rooms.js";
 import type { Config } from "./config.js";
-import { ZulipManager } from "./zulip-manager.js";
+import { ZulipManager, type ZulipFanout } from "./zulip-manager.js";
 
 type PresenceIO = IOServer<ClientToServerEvents, ServerToClientEvents, object, { user: User }>;
 
@@ -32,6 +33,7 @@ export function createPresenceServer(
 ): {
   io: PresenceIO;
   broadcaster: Broadcaster;
+  zulip: ZulipManager;
 } {
   const io: PresenceIO = new IOServer(httpServer, {
     cors: { origin: true, credentials: true },
@@ -48,7 +50,7 @@ export function createPresenceServer(
   // One per-user Zulip event-queue manager for the whole server. Fan-out is
   // scoped to the originating user's sockets only — Zulip data never leaks
   // across users.
-  const zulip = new ZulipManager(config, {
+  const zulipFanout: ZulipFanout = {
     onConnected: (userId) => {
       for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:connected");
     },
@@ -64,7 +66,11 @@ export function createPresenceServer(
     onReaction: (userId, payload) => {
       for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:reaction", payload);
     },
-  });
+    onDm: (userId, payload) => {
+      for (const sid of socketsForUser(userId)) io.to(sid).emit("zulip:dm", payload);
+    },
+  };
+  const zulip = new ZulipManager(config, zulipFanout);
 
   function snapshot(): Record<string, PresenceUser[]> {
     const by: Record<string, PresenceUser[]> = {};
@@ -184,6 +190,59 @@ export function createPresenceServer(
       }
     });
 
+    socket.on("zulip:fetch-users", async (cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      try {
+        const zUsers = await client.fetchAllUsers();
+        // Match Zulip members to Atrium users by email so the office can DM them.
+        const rows = await prisma.user.findMany({ select: { id: true, email: true } });
+        const byEmail = new Map(rows.map((r) => [r.email.toLowerCase(), r.id]));
+        const enriched = zUsers.map((u) => ({
+          ...u,
+          atriumUserId: byEmail.get(u.email.toLowerCase()) ?? null,
+        }));
+        socket.emit("zulip:users", { users: enriched });
+        cb?.(null, enriched);
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "fetch-users failed");
+      }
+    });
+
+    socket.on("zulip:send-dm", async ({ participantIds, body }, cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      const trimmed = (body ?? "").trim();
+      if (!trimmed) {
+        cb?.("empty message");
+        return;
+      }
+      try {
+        cb?.(null, await client.sendDirectMessage(participantIds, trimmed));
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "send-dm failed");
+      }
+    });
+
+    socket.on("zulip:fetch-dm-history", async ({ participantIds, numBefore }, cb) => {
+      const client = zulip.get(user.id);
+      if (!client) {
+        cb?.("not linked");
+        return;
+      }
+      try {
+        cb?.(null, await client.fetchDirectMessageHistory(participantIds, numBefore));
+      } catch (err) {
+        cb?.(err instanceof Error ? err.message : "fetch-dm-history failed");
+      }
+    });
+
     socket.on("presence:join", async (roomId) => {
       const check = await isRoomEnterableBy(roomId, user.email);
       if (!check.ok) {
@@ -267,5 +326,5 @@ export function createPresenceServer(
     },
   };
 
-  return { io, broadcaster };
+  return { io, broadcaster, zulip };
 }

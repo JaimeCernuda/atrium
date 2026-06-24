@@ -32,6 +32,14 @@ export interface ZulipFanout {
       op: "add" | "remove";
     },
   ) => void;
+  onDm: (
+    userId: string,
+    payload: {
+      participantKey: string;
+      participantIds: number[];
+      message: import("@atrium/shared").ChatMessage;
+    },
+  ) => void;
 }
 
 /**
@@ -126,12 +134,13 @@ export class ZulipManager {
       return null;
     }
 
-    const client = new ZulipQueueClient(link.zulipEmail, apiKey);
+    const client = new ZulipQueueClient(link.zulipEmail, apiKey, link.zulipUserId ?? 0);
     client.on("connected", () => this.fanout.onConnected(userId));
     client.on("disconnected", () => this.fanout.onDisconnected(userId));
     client.on("error", (message) => this.fanout.onError(userId, message));
     client.on("message", (payload) => this.fanout.onMessage(userId, payload));
     client.on("reaction", (payload) => this.fanout.onReaction(userId, payload));
+    client.on("dm", (payload) => this.fanout.onDm(userId, payload));
 
     const entry: ManagedEntry = { client, refCount };
     this.entries.set(userId, entry);

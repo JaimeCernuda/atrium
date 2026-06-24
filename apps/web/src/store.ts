@@ -8,6 +8,7 @@ import type {
   User,
   ZulipChannel,
   ZulipTopic,
+  ZulipUser,
 } from "@atrium/shared";
 import { loadPrefs, savePrefs, type ThemeMode, type UserPrefs } from "./prefs";
 
@@ -46,8 +47,8 @@ interface AtriumState {
 
   chatOpen: boolean;
   setChatOpen: (open: boolean) => void;
-  chatView: "global" | "dm" | "zulip";
-  setChatView: (v: "global" | "dm" | "zulip") => void;
+  chatView: "global" | "dm" | "zulip" | "zulip-dm";
+  setChatView: (v: "global" | "dm" | "zulip" | "zulip-dm") => void;
   activeDmUser: User | null;
   openDmWith: (user: User) => void;
   closeDm: () => void;
@@ -75,6 +76,22 @@ interface AtriumState {
   zulipActiveTopic: string | null;
   setZulipActiveChannel: (channelId: number | null, topicName: string | null) => void;
   setZulipActiveTopic: (topicName: string | null) => void;
+
+  // ── Zulip DMs (unified direct messages) ──
+  zulipSelfId: number | null;
+  setZulipSelfId: (id: number | null) => void;
+  zulipUsers: ZulipUser[];
+  setZulipUsers: (users: ZulipUser[]) => void;
+  zulipDmsByParticipants: Record<string, ChatMessage[]>; // key = participantKey(ids)
+  setZulipDmMessages: (key: string, msgs: ChatMessage[]) => void;
+  appendZulipDmMessage: (key: string, msg: ChatMessage) => void;
+  zulipActiveDmParticipants: number[] | null; // full set incl. self
+  setZulipActiveDmParticipants: (ids: number[] | null) => void;
+
+  // ── Global -> Zulip channel+topic mapping ──
+  globalZulipChannelId: number | null;
+  globalZulipTopicName: string | null;
+  setGlobalZulipConfig: (channelId: number | null, topicName: string | null) => void;
 
   patchUserEverywhere: (user: User) => void;
 
@@ -209,6 +226,35 @@ export const useStore = create<AtriumState>((set) => ({
   setZulipActiveChannel: (zulipActiveChannel, zulipActiveTopic) =>
     set({ zulipActiveChannel, zulipActiveTopic }),
   setZulipActiveTopic: (zulipActiveTopic) => set({ zulipActiveTopic }),
+
+  zulipSelfId: null,
+  setZulipSelfId: (zulipSelfId) => set({ zulipSelfId }),
+  zulipUsers: [],
+  setZulipUsers: (zulipUsers) => set({ zulipUsers }),
+  zulipDmsByParticipants: {},
+  setZulipDmMessages: (key, msgs) =>
+    set((state) => ({
+      zulipDmsByParticipants: { ...state.zulipDmsByParticipants, [key]: msgs },
+    })),
+  appendZulipDmMessage: (key, msg) =>
+    set((state) => {
+      const prev = state.zulipDmsByParticipants[key] ?? [];
+      if (prev.some((m) => m.id === msg.id)) return state;
+      return {
+        zulipDmsByParticipants: {
+          ...state.zulipDmsByParticipants,
+          [key]: [...prev, msg].slice(-LIMIT),
+        },
+      };
+    }),
+  zulipActiveDmParticipants: null,
+  setZulipActiveDmParticipants: (zulipActiveDmParticipants) =>
+    set({ zulipActiveDmParticipants }),
+
+  globalZulipChannelId: null,
+  globalZulipTopicName: null,
+  setGlobalZulipConfig: (globalZulipChannelId, globalZulipTopicName) =>
+    set({ globalZulipChannelId, globalZulipTopicName }),
 
   patchUserEverywhere: (u) =>
     set((state) => ({

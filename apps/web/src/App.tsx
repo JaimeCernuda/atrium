@@ -14,6 +14,7 @@ import { Login } from "./pages/Login";
 import { Office } from "./pages/Office";
 import { Metrics } from "./pages/Metrics";
 import { AdminRooms } from "./pages/AdminRooms";
+import { AdminGlobalSettings } from "./pages/AdminGlobalSettings";
 import { AdminBotTokens } from "./pages/AdminBotTokens";
 import { AdminRoles } from "./pages/AdminRoles";
 import { AdminMembers } from "./pages/AdminMembers";
@@ -127,6 +128,16 @@ export function App() {
                     element={
                       <AppShell>
                         <AdminRooms />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_rooms") && (
+                  <Route
+                    path="/admin/global"
+                    element={
+                      <AppShell>
+                        <AdminGlobalSettings />
                       </AppShell>
                     }
                   />

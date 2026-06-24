@@ -242,6 +242,32 @@ export interface ZulipChannel {
 export interface ZulipTopic {
   name: string;
   maxId: number; // max message id in topic
+  lastActivityTime?: string; // ISO; optional, may be absent
+}
+
+/** A Zulip org member, matched to an Atrium user by email when one exists. */
+export interface ZulipUser {
+  zulipUserId: number;
+  atriumUserId: string | null; // null = in Zulip but not (yet) an Atrium user
+  name: string;
+  email: string;
+  imageUrl?: string;
+}
+
+/** Org-wide mapping of the Atrium "Global" chat onto one Zulip channel+topic. */
+export interface GlobalChatConfig {
+  channelId: number | null;
+  topicName: string | null;
+}
+
+/**
+ * Canonical key for a direct-message conversation: the FULL participant set
+ * (including the current user), as sorted numeric Zulip ids joined by ",".
+ * Load-bearing: server dispatch, server send-echo, and the web store must all
+ * derive the same key for a conversation or messages will split.
+ */
+export function participantKey(ids: number[]): string {
+  return [...new Set(ids)].sort((a, b) => a - b).join(",");
 }
 
 // Zulip messages are surfaced as the existing ChatMessage shape so the
@@ -282,6 +308,12 @@ export type ServerToClientEvents = {
   "zulip:topics": (payload: { channelId: number; topics: ZulipTopic[] }) => void;
   "zulip:message": (payload: ZulipMessagePayload) => void;
   "zulip:reaction": (payload: ZulipReactionPayload) => void;
+  "zulip:users": (payload: { users: ZulipUser[] }) => void;
+  "zulip:dm": (payload: {
+    participantKey: string;
+    participantIds: number[];
+    message: ChatMessage;
+  }) => void;
 };
 
 export type ClientToServerEvents = {
@@ -306,5 +338,16 @@ export type ClientToServerEvents = {
   "zulip:send": (
     params: { channelId: number; topicName: string; body: string },
     cb?: (err: string | null, result?: { id: number }) => void,
+  ) => void;
+  "zulip:fetch-users": (
+    cb?: (err: string | null, users?: ZulipUser[]) => void,
+  ) => void;
+  "zulip:send-dm": (
+    params: { participantIds: number[]; body: string },
+    cb?: (err: string | null, result?: { id: number }) => void,
+  ) => void;
+  "zulip:fetch-dm-history": (
+    params: { participantIds: number[]; numBefore?: number },
+    cb?: (err: string | null, messages?: ChatMessage[]) => void,
   ) => void;
 };

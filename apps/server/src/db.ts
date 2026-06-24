@@ -96,6 +96,30 @@ export async function getZulipLink(
   };
 }
 
+// ───── Global-chat -> Zulip channel+topic mapping (org-wide singleton) ─────
+
+export async function getGlobalChatConfig(): Promise<{
+  channelId: number | null;
+  topicName: string | null;
+}> {
+  const row = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  return {
+    channelId: row?.globalZulipChannelId ?? null,
+    topicName: row?.globalZulipTopicName ?? null,
+  };
+}
+
+export async function setGlobalChatConfig(
+  channelId: number | null,
+  topicName: string | null,
+): Promise<void> {
+  await prisma.settings.upsert({
+    where: { id: "singleton" },
+    update: { globalZulipChannelId: channelId, globalZulipTopicName: topicName },
+    create: { id: "singleton", globalZulipChannelId: channelId, globalZulipTopicName: topicName },
+  });
+}
+
 /** Mark a user as seen now (called on socket connect, not just OAuth login). */
 export async function touchLastSeen(userId: string): Promise<void> {
   await prisma.user.update({

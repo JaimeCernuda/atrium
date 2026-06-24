@@ -23,7 +23,10 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import { MenuItem } from "@mui/material";
 import type { Room } from "@atrium/shared";
+import { useStore } from "../store";
+import { getSocket } from "../socket";
 
 function emptyRoom(): Room {
   return { id: "", name: "", color: "", category: "", disableMeeting: false, externalMeetUrl: "" };
@@ -42,6 +45,8 @@ export function AdminRooms() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [editing, setEditing] = useState<Room | null>(null);
   const [isNew, setIsNew] = useState(false);
+  const channels = useStore((s) => s.zulipChannels);
+  const channelById = new Map(channels.map((c) => [c.id, c]));
 
   const refresh = () => {
     fetchRooms().then(setRooms).catch(console.error);
@@ -49,18 +54,31 @@ export function AdminRooms() {
 
   useEffect(refresh, []);
 
+  // Load Zulip channels for the binding dropdown. Admins at GRC are Zulip
+  // admins, so the full channel list is fair game (no privacy gating).
+  useEffect(() => {
+    getSocket().emit("zulip:fetch-channels");
+  }, []);
+
   const save = async () => {
     if (!editing) return;
     const method = isNew ? "POST" : "PATCH";
     const url = isNew ? "/api/rooms" : `/api/rooms/${editing.id}`;
+    // Send zulipStreamId explicitly (null clears the binding); the server treats
+    // an absent field as "leave unchanged", so we always provide a value.
+    const payload = { ...editing, zulipStreamId: editing.zulipStreamId ?? null };
     const res = await fetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify(editing),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      alert(`Save failed: ${res.status}`);
+      if (res.status === 409) {
+        alert("That Zulip channel is already bound to another room.");
+      } else {
+        alert(`Save failed: ${res.status}`);
+      }
       return;
     }
     setEditing(null);
@@ -97,6 +115,7 @@ export function AdminRooms() {
               <TableCell>Name</TableCell>
               <TableCell>Category</TableCell>
               <TableCell>Color</TableCell>
+              <TableCell>Zulip channel</TableCell>
               <TableCell>Meeting URL</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -112,6 +131,11 @@ export function AdminRooms() {
                       sx={{ width: 20, height: 20, borderRadius: 0.5, bgcolor: r.color, display: "inline-block" }}
                     />
                   )}
+                </TableCell>
+                <TableCell>
+                  {r.zulipStreamId != null
+                    ? `#${channelById.get(r.zulipStreamId)?.name ?? r.zulipStreamId}`
+                    : "—"}
                 </TableCell>
                 <TableCell sx={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {r.externalMeetUrl ?? (r.disableMeeting ? "(no meeting)" : "—")}
@@ -155,6 +179,26 @@ export function AdminRooms() {
                 placeholder="#1976d2"
                 fullWidth
               />
+              <TextField
+                select
+                label="Zulip channel"
+                value={editing.zulipStreamId ?? ""}
+                onChange={(e) =>
+                  setEditing({
+                    ...editing,
+                    zulipStreamId: e.target.value === "" ? undefined : Number(e.target.value),
+                  })
+                }
+                helperText="Bind this room to a Zulip channel. Entering the room opens that channel's topics."
+                fullWidth
+              >
+                <MenuItem value="">(None)</MenuItem>
+                {channels.map((c) => (
+                  <MenuItem key={c.id} value={c.id}>
+                    #{c.name}
+                  </MenuItem>
+                ))}
+              </TextField>
               <TextField
                 label="External meeting URL"
                 value={editing.externalMeetUrl ?? ""}

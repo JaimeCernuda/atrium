@@ -9,6 +9,7 @@ import type { User } from "@atrium/shared";
 import { loadConfig } from "./config.js";
 import { registerAuth } from "./auth.js";
 import { createPresenceServer, type Broadcaster } from "./presence.js";
+import type { ZulipManager } from "./zulip-manager.js";
 import { closeOrphanedSessions } from "./db.js";
 import { registerMetrics } from "./metrics.js";
 import { registerRooms, seedRoomsIfEmpty } from "./rooms.js";
@@ -26,6 +27,9 @@ const config = loadConfig();
 
 const app = Fastify({ logger: true });
 const broadcasterRef: { current: Broadcaster | null } = { current: null };
+// The presence server owns the single ZulipManager; chat.ts reads it through
+// this ref to reroute Global chat to Zulip. Filled in once presence is built.
+const zulipRef: { current: ZulipManager | null } = { current: null };
 
 const avatarDir = process.env.AVATAR_DIR ?? "/data/avatars";
 mkdirSync(avatarDir, { recursive: true });
@@ -37,7 +41,7 @@ await registerAuth(app, config, broadcasterRef);
 await registerAvatars(app, config, avatarDir, broadcasterRef);
 await registerRooms(app, config);
 await registerMetrics(app, config);
-await registerChat(app, config, broadcasterRef);
+await registerChat(app, config, broadcasterRef, zulipRef);
 await registerDigest(app, config);
 await registerReminders(app, config);
 await registerBotTokens(app, config);
@@ -74,8 +78,9 @@ if (existsSync(staticRoot)) {
 
 await app.listen({ port: config.port, host: "0.0.0.0" });
 
-const { io, broadcaster } = createPresenceServer(app.server, config);
+const { io, broadcaster, zulip } = createPresenceServer(app.server, config);
 broadcasterRef.current = broadcaster;
+zulipRef.current = zulip;
 io.use((socket, next) => {
   const rawCookie = socket.request.headers.cookie ?? "";
   const match = new RegExp(`(?:^|;\\s*)${config.session.cookieName}=([^;]+)`).exec(rawCookie);
