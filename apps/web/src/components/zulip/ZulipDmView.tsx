@@ -31,6 +31,7 @@ import type { ChatMessage, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { participantKey } from "@atrium/shared";
 import { useStore } from "../../store";
 import { getSocket } from "../../socket";
+import { firstName, firstNames } from "../../names";
 import { UnlinkedZulipFallback } from "../UnlinkedZulipFallback";
 import {
   MessageList,
@@ -289,7 +290,7 @@ export function ZulipDmView() {
   if (activeParticipants && activeKey != null) {
     const others = activeParticipants.filter((id) => id !== selfId);
     const title =
-      others.map((id) => usersById.get(id)?.name ?? `User ${id}`).join(", ") || "Direct message";
+      firstNames(others.map((id) => usersById.get(id)?.name ?? `User ${id}`)) || "Direct message";
     const messages = dmsByParticipants[activeKey] ?? [];
     return (
       <Box sx={{ display: "flex", flexDirection: "column", flexGrow: 1, minHeight: 0 }}>
@@ -371,6 +372,10 @@ export function ZulipDmView() {
             const others = c.participantIds.filter((id) => id !== selfId);
             const isGroup = others.length > 1;
             const solo = others.length === 1 ? usersById.get(others[0]!) : undefined;
+            // Prefer first names built from the participant set; fall back to the
+            // server-built title for people we haven't loaded yet.
+            const resolved = others.map((id) => usersById.get(id)?.name).filter(Boolean) as string[];
+            const title = resolved.length === others.length ? firstNames(resolved) : c.title;
             return (
               <ListItemButton
                 key={c.conversationKey}
@@ -382,7 +387,7 @@ export function ZulipDmView() {
                   </Avatar>
                 ) : (
                   <Avatar src={solo?.imageUrl} sx={{ width: 36, height: 36, mr: 1.5 }}>
-                    {c.title.charAt(0)}
+                    {title.charAt(0)}
                   </Avatar>
                 )}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -392,7 +397,7 @@ export function ZulipDmView() {
                       noWrap
                       sx={{ fontWeight: hasUnread ? 700 : 500, flex: 1, minWidth: 0 }}
                     >
-                      {c.title}
+                      {title}
                     </Typography>
                     {c.lastMessageTs && (
                       <Typography
@@ -590,7 +595,7 @@ function NewGroupDmDialog({
                         <Avatar src={u.imageUrl} sx={{ width: 28, height: 28, mr: 1 }}>
                           {u.name.charAt(0)}
                         </Avatar>
-                        <ListItemText primary={u.name} secondary={u.email} />
+                        <ListItemText primary={firstName(u.name)} secondary={u.email} />
                       </ListItemButton>
                     ))}
                   </Collapse>

@@ -94,7 +94,12 @@ export interface Member {
   roleName: string;
   createdAt: string;
   lastSeenAt: string | null;
+  // The auto-join office (category Offices) this member owns, if any. Owning an
+  // office snaps the member into it on login.
   office: { id: string; name: string } | null;
+  // The manual-join desk (category Desks) this member owns, if any. A desk does
+  // NOT auto-join; the owner lands in the Lobby and clicks to enter.
+  desk: { id: string; name: string } | null;
   submissionCount: number;
 }
 

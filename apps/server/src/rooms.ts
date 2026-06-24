@@ -305,6 +305,43 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     },
   );
 
+  // Set a room's meeting link. Owner-or-admin, mirroring the rename gate so a
+  // desk owner can edit their own desk's meeting URL from the customize dialog
+  // without the full manage_rooms gate. An empty/null value clears it.
+  app.patch<{ Params: { id: string }; Body: { externalMeetUrl?: string | null } }>(
+    "/api/rooms/:id/meet-url",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
+        return reply
+          .code(403)
+          .send({ error: "only the owner or an admin can set this room's meeting URL" });
+      }
+      const raw = req.body?.externalMeetUrl;
+      let value: string | null = null;
+      if (typeof raw === "string" && raw.trim().length > 0) {
+        try {
+          const u = new URL(raw.trim());
+          if (u.protocol !== "http:" && u.protocol !== "https:") {
+            return reply.code(400).send({ error: "meeting URL must be http(s)" });
+          }
+          value = raw.trim().slice(0, 500);
+        } catch {
+          return reply.code(400).send({ error: "invalid meeting URL" });
+        }
+      }
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { externalMeetUrl: value },
+      });
+      return toApi(updated);
+    },
+  );
+
   // Set the Zulip channels bound to a room/desk. Owner-or-admin, mirroring the
   // rename gate: a desk owner may edit only their own desk (isOwnerEmail is
   // false for any other room), while admins (manage_rooms) may edit any room.

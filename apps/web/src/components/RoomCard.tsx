@@ -31,8 +31,6 @@ import DoorbellIcon from "@mui/icons-material/Doorbell";
 import LockIcon from "@mui/icons-material/Lock";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
 import PaletteIcon from "@mui/icons-material/Palette";
-import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutline";
-import LinkIcon from "@mui/icons-material/Link";
 import { useNavigate } from "react-router-dom";
 import { can, useStore } from "../store";
 import { useState } from "react";
@@ -40,6 +38,7 @@ import type { PresenceUser, Room } from "@atrium/shared";
 import { getSocket } from "../socket";
 import { OfficeDecorateDialog } from "./OfficeDecorateDialog";
 import { buildCardBg, buildBorderSx, LINK_ICON } from "./officeDecoUtils";
+import { firstName } from "../names";
 
 interface Props {
   room: Room;
@@ -105,22 +104,6 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
 
   const canKnock = users.length > 0 && !isCurrent && !room.disableMeeting;
 
-  const renameDesk = async () => {
-    const next = window.prompt("Rename your desk", room.name);
-    if (next == null) return;
-    const name = next.trim();
-    if (!name || name === room.name) return;
-    const res = await fetch(`/api/rooms/${room.id}/name`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    if (!res.ok) return;
-    const updated = (await res.json()) as Room;
-    setRooms(rooms.map((r) => (r.id === updated.id ? updated : r)));
-  };
-
   const toggleLock = async () => {
     const res = await fetch(`/api/rooms/${room.id}/lock`, {
       method: "POST",
@@ -178,19 +161,12 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
               textTransform: deco?.nameUppercase ? "uppercase" : undefined,
             }}
           >
-            {room.name}
+            {isDesk ? firstName(room.name) : room.name}
           </Typography>
         </Stack>
         <Stack direction="row" spacing={0}>
-          {isOwner && isDesk && (
-            <Tooltip title="Rename your desk">
-              <IconButton size="small" onClick={renameDesk}>
-                <DriveFileRenameOutlineIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
           {isOwner && (
-            <Tooltip title={isDesk ? "Decorate your desk" : "Decorate your office"}>
+            <Tooltip title={isDesk ? "Customize your desk" : "Customize your office"}>
               <IconButton
                 size="small"
                 data-tour="desk-customize"
@@ -319,7 +295,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
             sx={{ "& .MuiAvatar-root": { width: 30, height: 30, fontSize: 13 } }}
           >
             {users.map((u) => (
-              <Tooltip key={u.id} title={`${u.name}${u.inMeeting ? " · in meeting" : ""}`}>
+              <Tooltip key={u.id} title={`${firstName(u.name)}${u.inMeeting ? " · in meeting" : ""}`}>
                 <Box
                   data-tour="presence-avatar"
                   onClick={(e) => setMenuState({ anchor: e.currentTarget, user: u })}
@@ -333,7 +309,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
                 >
                   <Avatar
                     src={u.imageUrl}
-                    alt={u.name}
+                    alt={firstName(u.name)}
                     sx={{
                       width: 30,
                       height: 30,
@@ -387,7 +363,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
       )}
 
       <Menu anchorEl={menuState?.anchor} open={!!menuState} onClose={() => setMenuState(null)}>
-        <MenuItem disabled>{menuState?.user.name}</MenuItem>
+        <MenuItem disabled>{menuState ? firstName(menuState.user.name) : ""}</MenuItem>
         <MenuItem onClick={() => menuState && pingUser(menuState.user.id)}>
           <NotificationsActiveIcon fontSize="small" sx={{ mr: 1 }} />
           Ping to talk

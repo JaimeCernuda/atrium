@@ -23,6 +23,7 @@ import type { Member, RoleInfo } from "@atrium/shared";
 import { useStore } from "../store";
 
 const NO_OFFICE = "__none__";
+const NO_DESK = "__none__";
 
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
@@ -56,6 +57,7 @@ export function AdminMembers() {
   const [error, setError] = useState<string | null>(null);
 
   const offices = rooms.filter((r) => r.category === "Offices");
+  const desks = rooms.filter((r) => (r.category ?? "").toLowerCase() === "desks");
 
   const load = useCallback(() => {
     Promise.all([
@@ -74,15 +76,18 @@ export function AdminMembers() {
     load();
   }, [load]);
 
-  const patchMember = async (member: Member, patch: { role?: string; officeRoomId?: string | null }) => {
+  const patchMember = async (
+    member: Member,
+    patch: { role?: string; officeRoomId?: string | null; deskRoomId?: string | null },
+  ) => {
     try {
       const updated = await api<Member>(`/api/members/${member.id}`, {
         method: "PATCH",
         body: JSON.stringify(patch),
       });
       setMembers((ms) => ms.map((m) => (m.id === updated.id ? updated : m)));
-      // Office reassignment can displace another member's office — refresh all.
-      if (patch.officeRoomId !== undefined) load();
+      // Reassigning an office or desk can displace another member — refresh all.
+      if (patch.officeRoomId !== undefined || patch.deskRoomId !== undefined) load();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -100,8 +105,9 @@ export function AdminMembers() {
       </Stack>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Everyone who has ever signed in. Assign roles and offices here; permissions per role are
-        edited on the Roles page.
+        Everyone who has ever signed in. Assign roles, offices, and desks here; permissions per role
+        are edited on the Roles page. An office auto-joins its owner on login; a desk does not, so a
+        desk owner lands in the Lobby and clicks to enter.
       </Typography>
 
       {error && (
@@ -117,7 +123,8 @@ export function AdminMembers() {
               <TableCell />
               <TableCell>Member</TableCell>
               <TableCell>Role</TableCell>
-              <TableCell>Office</TableCell>
+              <TableCell>Office (auto-join)</TableCell>
+              <TableCell>Desk (manual join)</TableCell>
               <TableCell>Last seen</TableCell>
               <TableCell>Joined</TableCell>
               <TableCell align="center">Submissions</TableCell>
@@ -126,7 +133,7 @@ export function AdminMembers() {
           <TableBody>
             {members.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ color: "text.secondary" }}>
+                <TableCell colSpan={8} align="center" sx={{ color: "text.secondary" }}>
                   No members yet.
                 </TableCell>
               </TableRow>
@@ -186,6 +193,31 @@ export function AdminMembers() {
                     {/* Keep showing an office that exists but isn't categorized as "Offices" */}
                     {m.office && !offices.some((o) => o.id === m.office!.id) && (
                       <MenuItem value={m.office.id}>{m.office.name}</MenuItem>
+                    )}
+                  </Select>
+                </TableCell>
+                <TableCell>
+                  <Select
+                    size="small"
+                    value={m.desk?.id ?? NO_DESK}
+                    onChange={(e) =>
+                      patchMember(m, {
+                        deskRoomId: e.target.value === NO_DESK ? null : e.target.value,
+                      })
+                    }
+                    sx={{ minWidth: 140, fontSize: "0.875rem" }}
+                  >
+                    <MenuItem value={NO_DESK}>
+                      <em>None</em>
+                    </MenuItem>
+                    {desks.map((d) => (
+                      <MenuItem key={d.id} value={d.id}>
+                        {d.name}
+                      </MenuItem>
+                    ))}
+                    {/* Keep showing a desk that exists but isn't in the desks list */}
+                    {m.desk && !desks.some((d) => d.id === m.desk!.id) && (
+                      <MenuItem value={m.desk.id}>{m.desk.name}</MenuItem>
                     )}
                   </Select>
                 </TableCell>

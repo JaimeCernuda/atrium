@@ -219,6 +219,22 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
         : [];
   const [channels, setChannels] = useState<number[]>(boundInit);
 
+  // The room name and meeting link live here too, so the customize dialog is the
+  // single place an owner edits their desk/office. Name PATCHes /name; the
+  // meeting link PATCHes /meet-url (both owner-or-admin gated server-side).
+  const [name, setName] = useState(room.name);
+  const [meetUrl, setMeetUrl] = useState(room.externalMeetUrl ?? "");
+  const meetUrlError =
+    meetUrl.trim().length > 0 &&
+    (() => {
+      try {
+        const u = new URL(meetUrl.trim());
+        return u.protocol !== "http:" && u.protocol !== "https:";
+      } catch {
+        return true;
+      }
+    })();
+
   const deco: OfficeDecoration = {
     ...(useGradient
       ? { bgGradient: { from: gradFrom, to: gradTo, angle: gradAngle } }
@@ -249,8 +265,36 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
   const removeLink = (id: string) => setLinks(links.filter((l) => l.id !== id));
 
   const save = async () => {
+    if (meetUrlError) { setSaveError("Enter a valid http(s) meeting URL or leave it empty"); return; }
     setSaving(true); setSaveError(null);
     try {
+      // Name change persists first via the owner-or-admin rename endpoint.
+      const trimmedName = name.trim();
+      if (trimmedName && trimmedName !== room.name) {
+        const nr = await fetch(`/api/rooms/${room.id}/name`, {
+          method: "PATCH", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmedName }),
+        });
+        if (!nr.ok) {
+          const body = await nr.json().catch(() => ({}));
+          setSaveError((body as { error?: string }).error ?? "Failed to save name");
+          return;
+        }
+      }
+      // Meeting link via the owner-or-admin meet-url endpoint (empty clears it).
+      if (meetUrl.trim() !== (room.externalMeetUrl ?? "")) {
+        const mr = await fetch(`/api/rooms/${room.id}/meet-url`, {
+          method: "PATCH", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ externalMeetUrl: meetUrl.trim() }),
+        });
+        if (!mr.ok) {
+          const body = await mr.json().catch(() => ({}));
+          setSaveError((body as { error?: string }).error ?? "Failed to save meeting URL");
+          return;
+        }
+      }
       // Desk channel bindings persist first so the decorate response reflects them.
       if (isDesk) {
         const a = [...channels].sort((x, y) => x - y);
@@ -310,10 +354,22 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
       </DialogTitle>
 
       <DialogContent sx={{ p: 0 }}>
+        {/* Name — the single place to rename a desk/office */}
+        <Box sx={{ px: 3, pt: 2, pb: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+          <TextField
+            label={isDesk ? "Desk name" : "Name"}
+            value={name}
+            onChange={(e) => setName(e.target.value.slice(0, 100))}
+            size="small"
+            fullWidth
+            inputProps={{ maxLength: 100 }}
+          />
+        </Box>
+
         {/* Live preview */}
         <Box sx={{ px: 3, pt: 1, pb: 2, borderBottom: "1px solid", borderColor: "divider" }}>
           <Stack direction="row" alignItems="center" spacing={2}>
-            <CardPreview deco={deco} roomName={room.name} />
+            <CardPreview deco={deco} roomName={isDesk ? name.split(/\s+/)[0] || name : name} />
             <Typography variant="caption" color="text.secondary">Live preview</Typography>
           </Stack>
         </Box>
@@ -546,6 +602,33 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
                   </Box>
                 )}
               </Stack>
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
+
+        {/* ── Meeting ──────────────────────────────────────── */}
+        <Accordion disableGutters elevation={0}
+          sx={{ "&::before": { display: "none" }, borderBottom: "1px solid", borderColor: "divider" }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle2">Meeting</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Stack spacing={1}>
+              <Typography variant="caption" color="text.secondary">
+                The video link people open from your card. Use any Zoom, Meet, Jitsi, or other URL.
+                Leave it empty to remove the meeting button.
+              </Typography>
+              <TextField
+                label="Meeting link"
+                placeholder="https://meet.example.com/your-room"
+                value={meetUrl}
+                onChange={(e) => setMeetUrl(e.target.value)}
+                size="small"
+                fullWidth
+                error={meetUrlError}
+                helperText={meetUrlError ? "Enter a valid http(s) URL or leave it empty" : " "}
+                inputProps={{ maxLength: 500 }}
+              />
             </Stack>
           </AccordionDetails>
         </Accordion>
