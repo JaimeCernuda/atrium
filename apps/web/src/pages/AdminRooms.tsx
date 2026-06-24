@@ -238,10 +238,15 @@ export function AdminRooms() {
         .map((r) => (r.ownerEmail ?? "").toLowerCase())
         .filter(Boolean),
     );
-    const existingShared = new Set(
+    // Match the broad shared rooms by NAME regardless of category/owner: the
+    // live DB seeds these from config/rooms.json with categories backfilled from
+    // color (e.g. ChronoLog lands in "Engineering", not "Projects"), so a
+    // category filter would miss them and POST a duplicate. Keyed by lowercased
+    // name -> existing room so we can re-bind/re-categorize in place instead.
+    const existingSharedByName = new Map(
       rooms
-        .filter((r) => (r.category ?? "").toLowerCase() === "projects" && !r.ownerEmail)
-        .map((r) => r.name.toLowerCase()),
+        .filter((r) => !r.ownerEmail && !isDeskRoom(r))
+        .map((r) => [r.name.toLowerCase(), r] as const),
     );
     const res = {
       deskCreated: 0,
@@ -288,12 +293,32 @@ export function AdminRooms() {
     }
 
     for (const name of SHARED_PROJECTS) {
-      if (existingShared.has(name.toLowerCase())) {
-        res.projSkipped++;
-        continue;
-      }
       const ch = channelByName.get(name.toLowerCase());
       if (!ch && name !== "Paper Reading") res.unmatched.push(`project channel "${name}"`);
+      const ids = ch ? [ch.id] : [];
+      const existing = existingSharedByName.get(name.toLowerCase());
+      if (existing) {
+        // Already present (possibly under a backfilled category like
+        // "Engineering"): re-home it into the shared Projects row and bind its
+        // channel in place rather than creating a duplicate.
+        const boundIds = existing.zulipStreamIds ?? [];
+        const merged = ids.length
+          ? Array.from(new Set([...boundIds, ...ids]))
+          : boundIds;
+        const r = await fetch(`/api/rooms/${existing.id}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category: SHARED_CATEGORY,
+            color: SHARED_COLOR,
+            zulipStreamIds: merged,
+          }),
+        });
+        if (r.ok) res.projSkipped++;
+        else res.failed++;
+        continue;
+      }
       const r = await fetch("/api/rooms", {
         method: "POST",
         credentials: "include",
@@ -304,12 +329,11 @@ export function AdminRooms() {
           category: SHARED_CATEGORY,
           color: SHARED_COLOR,
           ownerEmail: null,
-          zulipStreamIds: ch ? [ch.id] : [],
+          zulipStreamIds: ids,
         }),
       });
       if (r.ok) {
         res.projCreated++;
-        existingShared.add(name.toLowerCase());
       } else res.failed++;
     }
 
