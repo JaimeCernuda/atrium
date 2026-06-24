@@ -430,6 +430,10 @@ export const useStore = create<AtriumState>((set, get) => ({
           topics.filter((k) => k !== globalKey).map((k) => [k, true as const]),
         ),
         zulipUnreadDms: Object.fromEntries(dms.map((k) => [k, true as const])),
+        // Ground Global's own indicator in Zulip's unread truth for the mapped
+        // channel:topic — counted exactly once here, never via zulipUnreadTopics
+        // (still filtered out above, preserving the Pass-7 no-double-count fix).
+        zulipUnreadGlobal: globalKey != null && topics.includes(globalKey) ? 1 : 0,
       };
     }),
 

@@ -43,6 +43,9 @@ export interface Room {
   decorations?: OfficeDecoration;
   zulipStreamId?: number;
   zulipStreamIds?: number[];
+  // A "Papers" research room superseded by a per-student desk is hidden from the
+  // floorplan (reversible, never deleted) — see layout.ts zoneFor().
+  superseded?: boolean;
 }
 
 /**

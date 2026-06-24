@@ -17,6 +17,7 @@ function toApi(room: {
   decorations?: unknown;
   zulipStreamId?: number | null;
   zulipStreamIds?: number[];
+  superseded?: boolean;
 }): Room {
   // Read-time union: the multi-channel array plus the legacy single column,
   // de-duped and sorted. zulipStreamId stays as the first id for back-compat.
@@ -35,6 +36,7 @@ function toApi(room: {
     decorations: (room.decorations as OfficeDecoration | null) ?? undefined,
     zulipStreamId: arr.length > 0 ? arr[0] : undefined,
     zulipStreamIds: arr,
+    superseded: room.superseded ?? false,
   };
 }
 
@@ -222,6 +224,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
         disableMeeting: body.disableMeeting ?? false,
         externalMeetUrl: body.externalMeetUrl ?? null,
         ...(owner.set ? { ownerEmail: owner.value } : {}),
+        ...(body.superseded !== undefined && { superseded: !!body.superseded }),
         ...streamWrite(body),
         sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
       },
@@ -243,6 +246,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
         ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
         ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
         ...(owner.set ? { ownerEmail: owner.value } : {}),
+        ...(body.superseded !== undefined && { superseded: !!body.superseded }),
         ...streamWrite(body),
       },
     });

@@ -16,7 +16,6 @@ import ChatIcon from "@mui/icons-material/Chat";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import type { PermissionKey } from "@atrium/shared";
 import { can, unreadChannelTotal, useStore } from "../store";
-import { SettingsMenu } from "./SettingsMenu";
 import { UserMenu } from "./UserMenu";
 import { ZulipLinkDialog } from "./ZulipLinkDialog";
 import { ChatPanel } from "./ChatPanel";
@@ -203,7 +202,6 @@ export function AppShell({ children }: Props) {
                   </Badge>
                 </IconButton>
                 <AdminMenu />
-                <SettingsMenu />
                 <UserMenu />
               </>
             )}

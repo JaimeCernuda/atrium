@@ -50,12 +50,25 @@ const STUDENT_DESK_BINDINGS: { studentName: string; channelNames: string[] }[] =
   { studentName: "Hua Xu", channelNames: ["Coeus"] },
   { studentName: "Keith Bateman", channelNames: ["DTIO"] },
   { studentName: "Jie Ye", channelNames: ["DyTO", "Pythia"] },
-  { studentName: "Shazzadul Islam", channelNames: ["Fine-Tunning"] },
+  { studentName: "Shazzadul Islam", channelNames: ["Fine-Tuning"] },
   { studentName: "Isa Muradli", channelNames: ["GPUCompress"] },
-  { studentName: "Zia Uddin Chowdhury", channelNames: ["Lobotomy"] },
+  { studentName: "Zia Uddin Chowdhury", channelNames: ["KV_Lobotomy"] },
   { studentName: "Meng Tang", channelNames: ["Widget"] },
   { studentName: "Izzet Yildirim", channelNames: [] },
 ];
+
+// Match Zulip channels & students by a loose key: case-insensitive, with spaces/
+// hyphens/underscores and parenthetical suffixes ("(Candice)") stripped — so
+// Fine-Tuning<->Fine-Tunning, KV_Lobotomy<->Lobotomy, WIDGET<->Widget and
+// "Meng Tang (Candice)"<->"Meng Tang" all resolve. Strip parentheticals BEFORE
+// collapsing whitespace so the surrounding space vanishes cleanly.
+function normalizeForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, "")
+    .replace(/[\s\-_]+/g, "")
+    .trim();
+}
 
 const isDeskRoom = (r: Room): boolean => (r.category ?? "").toLowerCase() === "desks";
 
@@ -230,8 +243,8 @@ export function AdminRooms() {
   // name is skipped and reported rather than failing the whole run.
   const setupLab = async () => {
     setSeeding(true);
-    const channelByName = new Map(channels.map((c) => [c.name.toLowerCase(), c]));
-    const userByName = new Map(zulipUsers.map((u) => [u.name.toLowerCase(), u]));
+    const channelByName = new Map(channels.map((c) => [normalizeForMatch(c.name), c]));
+    const userByName = new Map(zulipUsers.map((u) => [normalizeForMatch(u.name), u]));
     const existingOwners = new Set(
       rooms
         .filter(isDeskRoom)
@@ -258,42 +271,83 @@ export function AdminRooms() {
     };
 
     for (const b of STUDENT_DESK_BINDINGS) {
-      const u = userByName.get(b.studentName.toLowerCase());
+      const u = userByName.get(normalizeForMatch(b.studentName));
       if (!u) {
         res.unmatched.push(`student "${b.studentName}"`);
         continue;
       }
       const email = u.email.toLowerCase();
-      if (existingOwners.has(email)) {
-        res.deskSkipped++;
-        continue;
-      }
       const ids: number[] = [];
       for (const cn of b.channelNames) {
-        const ch = channelByName.get(cn.toLowerCase());
+        const ch = channelByName.get(normalizeForMatch(cn));
         if (ch) ids.push(ch.id);
         else res.unmatched.push(`channel "${cn}" (for ${b.studentName})`);
       }
-      const r = await fetch("/api/rooms", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: randomId(),
-          name: u.name,
-          category: DESK_CATEGORY,
-          ownerEmail: email,
-          zulipStreamIds: ids,
-        }),
-      });
-      if (r.ok) {
-        res.deskCreated++;
-        existingOwners.add(email);
-      } else res.failed++;
+      const existingDesk = rooms.find(
+        (r) => isDeskRoom(r) && (r.ownerEmail ?? "").toLowerCase() === email,
+      );
+      if (existingDesk) {
+        // Re-bind: union current + intended channels so a re-run ADDS (e.g. Jie's
+        // Pythia onto an existing DyTO desk) without dropping anything.
+        const boundIds = [...(existingDesk.zulipStreamIds ?? [])].sort((a, b) => a - b);
+        const merged = Array.from(new Set([...boundIds, ...ids])).sort((a, b) => a - b);
+        const same =
+          merged.length === boundIds.length && merged.every((x, i) => x === boundIds[i]);
+        if (same) {
+          res.deskSkipped++;
+        } else {
+          const r = await fetch(`/api/rooms/${existingDesk.id}`, {
+            method: "PATCH",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ zulipStreamIds: merged }),
+          });
+          if (r.ok) res.deskSkipped++;
+          else res.failed++;
+        }
+      } else {
+        const r = await fetch("/api/rooms", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: randomId(),
+            name: u.name,
+            category: DESK_CATEGORY,
+            ownerEmail: email,
+            zulipStreamIds: ids,
+          }),
+        });
+        if (r.ok) {
+          res.deskCreated++;
+          existingOwners.add(email);
+        } else res.failed++;
+      }
+
+      // Supersede the matching "Papers" research room (hide, reversible) once
+      // this student has a desk. The room is named after the PROJECT/channel
+      // (e.g. "Coeus"), not the student, so match against the channel names.
+      // Idempotent: PATCH superseded:true only when not already set.
+      const papersRoom = nonDeskRooms.find(
+        (r) =>
+          (r.category ?? "").toLowerCase() === "papers" &&
+          b.channelNames.some(
+            (cn) => normalizeForMatch(r.name) === normalizeForMatch(cn),
+          ),
+      );
+      if (papersRoom && !papersRoom.superseded) {
+        const r = await fetch(`/api/rooms/${papersRoom.id}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ superseded: true }),
+        });
+        if (!r.ok) res.failed++;
+      }
     }
 
     for (const name of SHARED_PROJECTS) {
-      const ch = channelByName.get(name.toLowerCase());
+      const ch = channelByName.get(normalizeForMatch(name));
       if (!ch && name !== "Paper Reading") res.unmatched.push(`project channel "${name}"`);
       const ids = ch ? [ch.id] : [];
       const existing = existingSharedByName.get(name.toLowerCase());

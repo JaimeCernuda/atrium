@@ -10,9 +10,11 @@ import {
   Divider,
   IconButton,
   ListItemIcon,
+  ListItemText,
   Menu,
   MenuItem,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -21,9 +23,17 @@ import ArticleIcon from "@mui/icons-material/Article";
 import LogoutIcon from "@mui/icons-material/Logout";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
 import DeleteIcon from "@mui/icons-material/Delete";
+import LightModeIcon from "@mui/icons-material/LightMode";
+import DarkModeIcon from "@mui/icons-material/DarkMode";
+import SettingsBrightnessIcon from "@mui/icons-material/SettingsBrightness";
+import NotificationsIcon from "@mui/icons-material/Notifications";
+import VolumeUpIcon from "@mui/icons-material/VolumeUp";
+import ForumIcon from "@mui/icons-material/Forum";
 import { useNavigate } from "react-router-dom";
 import type { User } from "@atrium/shared";
 import { useStore } from "../store";
+import { requestPermission, supportsNotifications } from "../notify";
+import type { ThemeMode } from "../prefs";
 import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
 import { AvatarCropper } from "./AvatarCropper";
 
@@ -32,6 +42,14 @@ export function UserMenu() {
   const setUser = useStore((s) => s.setUser);
   const zulipLinked = useStore((s) => s.zulipLinked);
   const setZulipLinkDialogOpen = useStore((s) => s.setZulipLinkDialogOpen);
+  const themeMode = useStore((s) => s.prefs.themeMode);
+  const setThemeMode = useStore((s) => s.setThemeMode);
+  const notificationsEnabled = useStore((s) => s.prefs.notificationsEnabled);
+  const setNotificationsEnabled = useStore((s) => s.setNotificationsEnabled);
+  const soundsEnabled = useStore((s) => s.prefs.soundsEnabled);
+  const setSoundsEnabled = useStore((s) => s.setSoundsEnabled);
+  const globalChatSoundEnabled = useStore((s) => s.prefs.globalChatSoundEnabled);
+  const setGlobalChatSoundEnabled = useStore((s) => s.setGlobalChatSoundEnabled);
   const navigate = useNavigate();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -125,6 +143,24 @@ export function UserMenu() {
     window.location.href = "/";
   };
 
+  const pickTheme = (mode: ThemeMode) => {
+    setThemeMode(mode);
+  };
+
+  const toggleNotifications = async () => {
+    if (!notificationsEnabled) {
+      const perm = await requestPermission();
+      if (perm !== "granted") return;
+    }
+    setNotificationsEnabled(!notificationsEnabled);
+  };
+
+  const themeLabel: Record<ThemeMode, string> = {
+    light: "Light",
+    dark: "Dark",
+    system: "System",
+  };
+
   if (!user) return null;
 
   return (
@@ -169,6 +205,64 @@ export function UserMenu() {
             <ChatBubbleOutlineIcon fontSize="small" />
           </ListItemIcon>
           {zulipLinked ? "Zulip connected" : "Connect Zulip"}
+        </MenuItem>
+        <Divider />
+        <Typography variant="caption" sx={{ px: 2, color: "text.secondary" }}>
+          Settings
+        </Typography>
+        <MenuItem selected={themeMode === "light"} onClick={() => pickTheme("light")}>
+          <ListItemIcon>
+            <LightModeIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>{themeLabel.light}</ListItemText>
+        </MenuItem>
+        <MenuItem selected={themeMode === "dark"} onClick={() => pickTheme("dark")}>
+          <ListItemIcon>
+            <DarkModeIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>{themeLabel.dark}</ListItemText>
+        </MenuItem>
+        <MenuItem selected={themeMode === "system"} onClick={() => pickTheme("system")}>
+          <ListItemIcon>
+            <SettingsBrightnessIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>{themeLabel.system}</ListItemText>
+        </MenuItem>
+
+        <Divider />
+
+        <MenuItem onClick={toggleNotifications} disabled={!supportsNotifications()}>
+          <ListItemIcon>
+            <NotificationsIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>
+            {supportsNotifications() ? "Browser notifications" : "Notifications unsupported"}
+          </ListItemText>
+          <Switch checked={notificationsEnabled} />
+        </MenuItem>
+
+        <MenuItem onClick={() => setSoundsEnabled(!soundsEnabled)}>
+          <ListItemIcon>
+            <VolumeUpIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText
+            primary="Sounds"
+            secondary="Pings, knocks, DMs"
+            secondaryTypographyProps={{ variant: "caption" }}
+          />
+          <Switch checked={soundsEnabled} />
+        </MenuItem>
+
+        <MenuItem onClick={() => setGlobalChatSoundEnabled(!globalChatSoundEnabled)}>
+          <ListItemIcon>
+            <ForumIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText
+            primary="Global chat sound"
+            secondary="Soft tap on every message"
+            secondaryTypographyProps={{ variant: "caption" }}
+          />
+          <Switch checked={globalChatSoundEnabled} />
         </MenuItem>
         <Divider />
         <MenuItem onClick={logout}>
