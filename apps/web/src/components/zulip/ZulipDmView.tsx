@@ -277,7 +277,7 @@ export function ZulipDmView() {
     ? conversations.filter(
         (c) =>
           c.title.toLowerCase().includes(q) ||
-          snippet(c.lastMessage.body).toLowerCase().includes(q),
+          (c.lastMessage ? snippet(c.lastMessage.body).toLowerCase().includes(q) : false),
       )
     : conversations;
 
@@ -348,13 +348,15 @@ export function ZulipDmView() {
                     >
                       {c.title}
                     </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ flexShrink: 0 }}
-                    >
-                      {relativeTime(c.lastMessageTs)}
-                    </Typography>
+                    {c.lastMessageTs && (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ flexShrink: 0 }}
+                      >
+                        {relativeTime(c.lastMessageTs)}
+                      </Typography>
+                    )}
                   </Stack>
                   <Typography
                     variant="caption"
@@ -367,7 +369,7 @@ export function ZulipDmView() {
                       fontWeight: hasUnread ? 600 : 400,
                     }}
                   >
-                    {snippet(c.lastMessage.body)}
+                    {c.lastMessage ? snippet(c.lastMessage.body) : "No messages yet"}
                   </Typography>
                 </Box>
                 {hasUnread && (

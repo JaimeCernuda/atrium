@@ -379,12 +379,117 @@ export class ZulipQueueClient extends EventEmitter {
   }
 
   /**
-   * Fetch the user's recent DM conversations — both 1:1 and group DMs. Pulls the
-   * most recent DMs via narrow [{"operator":"is","operand":"dm"}], groups them by
-   * the FULL participant set (display_recipient ∪ sender ∪ self) into one row per
-   * conversation, and returns them most-recent-first. The client computes unread.
+   * Fetch the user's recent DM conversations — both 1:1 and group DMs.
+   *
+   * Completeness matters here: grouping the last N DMs from a single
+   * is:dm message window silently drops conversations whenever a few chatty
+   * threads consume the whole window. So the COMPLETE conversation set comes
+   * from Zulip's purpose-built `recent_private_conversations` (the /register
+   * field "designed to support … the Direct messages widget"), which returns
+   * every DM/group-DM as {user_ids (others, excluding self), max_message_id}
+   * with no message-count cap.
+   *
+   * We then enrich the most-recent of those with a snippet/title/timestamp from
+   * a single is:dm message window (one fetch, cheap), and fill titles for the
+   * snippet-less remainder from the user directory. Window-backed rows sort
+   * first by timestamp (newest); the snippet-less tail — necessarily older than
+   * everything in the window — follows, ordered by max_message_id.
    */
   async fetchRecentDmConversations(numBefore = 200): Promise<ZulipDmConversation[]> {
+    // Complete conversation set (no cap) + recent-message window for snippets,
+    // fetched concurrently. usersById is only consulted for snippet-less rows.
+    const [recent, windowMessages, users] = await Promise.all([
+      this.fetchRecentPrivateConversations(),
+      this.fetchDmMessageWindow(numBefore),
+      this.fetchAllUsers(),
+    ]);
+
+    const usersById = new Map(users.map((u) => [u.zulipUserId, u.name]));
+
+    // Group the window by participant-set key. Zulip returns messages
+    // oldest-first within the window, so the LAST message seen for a key is the
+    // most recent — track it so each conversation carries its newest message.
+    const windowByKey = new Map<string, { ids: number[]; last: ZulipRawMessage }>();
+    for (const m of windowMessages) {
+      const dr = Array.isArray(m.display_recipient) ? m.display_recipient : [];
+      const ids = [...new Set([this.selfUserId, m.sender_id, ...dr.map((u) => u.id)])];
+      const key = participantKey(ids);
+      const existing = windowByKey.get(key);
+      if (!existing || m.timestamp >= existing.last.timestamp) {
+        windowByKey.set(key, { ids, last: m });
+      }
+    }
+
+    const windowBacked: ZulipDmConversation[] = [];
+    const snippetless: ZulipDmConversation[] = [];
+
+    for (const { user_ids, max_message_id } of recent) {
+      // recent_private_conversations' user_ids excludes self; rebuild the full
+      // participant set so the key matches the rest of the app.
+      const ids = [...new Set([this.selfUserId, ...user_ids])];
+      const key = participantKey(ids);
+      const sortedIds = key.split(",").map(Number);
+      const hit = windowByKey.get(key);
+      if (hit) {
+        windowBacked.push({
+          conversationKey: key,
+          participantIds: sortedIds,
+          title: dmTitle(hit.last, this.selfUserId),
+          lastMessage: toChatMessage(hit.last),
+          lastMessageTs: new Date(hit.last.timestamp * 1000).toISOString(),
+          lastMessageId: hit.last.id,
+        });
+      } else {
+        const others = sortedIds.filter((id) => id !== this.selfUserId);
+        const title =
+          others.length === 0
+            ? "You"
+            : others.map((id) => usersById.get(id) ?? `User ${id}`).join(", ");
+        snippetless.push({
+          conversationKey: key,
+          participantIds: sortedIds,
+          title,
+          lastMessageId: max_message_id,
+        });
+      }
+    }
+
+    windowBacked.sort(
+      (a, b) =>
+        new Date(b.lastMessageTs!).getTime() - new Date(a.lastMessageTs!).getTime(),
+    );
+    snippetless.sort((a, b) => b.lastMessageId - a.lastMessageId);
+    return [...windowBacked, ...snippetless];
+  }
+
+  /**
+   * Zulip's complete recent direct-message conversation set, via a throwaway
+   * /register that only requests `recent_private_conversations`. Each entry is
+   * {user_ids (the OTHER participants, excluding self), max_message_id}. No
+   * message-count cap, so no conversation is silently dropped.
+   */
+  private async fetchRecentPrivateConversations(): Promise<
+    Array<{ user_ids: number[]; max_message_id: number }>
+  > {
+    const body = new URLSearchParams({
+      event_types: JSON.stringify(["recent_private_conversations"]),
+      fetch_event_types: JSON.stringify(["recent_private_conversations"]),
+    });
+    const res = (await this.request("/register", { method: "POST", body })) as {
+      queue_id?: string;
+      recent_private_conversations?: Array<{ user_ids: number[]; max_message_id: number }>;
+    };
+    // The register call also opens an event queue; tear it down immediately so
+    // it doesn't linger on the server.
+    if (res.queue_id) {
+      const del = new URLSearchParams({ queue_id: res.queue_id });
+      void this.request(`/events?${del.toString()}`, { method: "DELETE" }).catch(() => {});
+    }
+    return res.recent_private_conversations ?? [];
+  }
+
+  /** The most-recent direct messages across all DM conversations (oldest-first). */
+  private async fetchDmMessageWindow(numBefore: number): Promise<ZulipRawMessage[]> {
     const narrow = JSON.stringify([{ operator: "is", operand: "dm" }]);
     const params = new URLSearchParams({
       anchor: "newest",
@@ -396,34 +501,7 @@ export class ZulipQueueClient extends EventEmitter {
     const res = (await this.request(`/messages?${params.toString()}`)) as {
       messages: ZulipRawMessage[];
     };
-
-    // Group by participant-set key. Zulip returns messages oldest-first within
-    // the window, so the LAST message seen for a key is the most recent — track
-    // it so each conversation carries its newest message.
-    const byKey = new Map<string, { ids: number[]; last: ZulipRawMessage }>();
-    for (const m of res.messages) {
-      const dr = Array.isArray(m.display_recipient) ? m.display_recipient : [];
-      const ids = [...new Set([this.selfUserId, m.sender_id, ...dr.map((u) => u.id)])];
-      const key = participantKey(ids);
-      const existing = byKey.get(key);
-      if (!existing || m.timestamp >= existing.last.timestamp) {
-        byKey.set(key, { ids, last: m });
-      }
-    }
-
-    const conversations: ZulipDmConversation[] = Array.from(byKey.entries()).map(
-      ([key, { ids, last }]) => ({
-        conversationKey: key,
-        participantIds: participantKey(ids).split(",").map(Number),
-        title: dmTitle(last, this.selfUserId),
-        lastMessage: toChatMessage(last),
-        lastMessageTs: new Date(last.timestamp * 1000).toISOString(),
-      }),
-    );
-
-    return conversations.sort(
-      (a, b) => new Date(b.lastMessageTs).getTime() - new Date(a.lastMessageTs).getTime(),
-    );
+    return res.messages;
   }
 
   // ───── Long-poll event loop ─────

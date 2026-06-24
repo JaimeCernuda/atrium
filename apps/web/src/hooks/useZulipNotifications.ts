@@ -113,12 +113,16 @@ export function useZulipNotifications(): void {
       // Bump this conversation to the top of the recent-DM list with the new
       // message — for our OWN sends too, so the list reorders on every message.
       // The server supplies the title so group-DM names never degrade.
+      // Zulip message ids are numeric; fall back to 0 for optimistic temp ids
+      // (e.g. "pending:…") so ordering still works once the real id arrives.
+      const lastMessageId = Number.parseInt(message.id, 10) || 0;
       state.updateZulipDmConversation({
         conversationKey: key,
         participantIds,
         title,
         lastMessage: message,
         lastMessageTs: message.createdAt,
+        lastMessageId,
       });
 
       // Same self-guard as channel messages: don't notify until we can reliably

@@ -277,8 +277,16 @@ export interface ZulipDmConversation {
   conversationKey: string; // participantKey(full participant set incl. self)
   participantIds: number[]; // sorted numeric ids, including self
   title: string; // "Alice" (1:1) or "Alice, Bob, Carol" (group)
-  lastMessage: ChatMessage;
-  lastMessageTs: string; // ISO timestamp of lastMessage
+  // Newest message in the conversation. Optional: conversations surfaced ONLY
+  // by Zulip's recent_private_conversations (i.e. older than the recent-message
+  // window) carry no snippet — just a title and ordering id. Rows backed by a
+  // fetched message always have both.
+  lastMessage?: ChatMessage;
+  lastMessageTs?: string; // ISO timestamp of lastMessage, when known
+  // Zulip message id used as a stable ordering key, always present. For
+  // window-backed rows this is the last message's id; for snippet-less rows it
+  // is recent_private_conversations' max_message_id.
+  lastMessageId: number;
 }
 
 /**
