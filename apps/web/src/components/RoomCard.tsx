@@ -64,12 +64,6 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
 
   // A desk IS a person: category "Desks", bound to a student's project channel.
   const isDesk = (room.category ?? "").toLowerCase() === "desks";
-  // The desk's owner identity, resolved from Zulip members by email, so an
-  // empty desk still shows whose it is (avatar + name).
-  const deskOwner =
-    isDesk && room.ownerEmail
-      ? zulipUsers.find((u) => u.email.toLowerCase() === room.ownerEmail!.toLowerCase())
-      : undefined;
 
   // The room's bound channels: the multi-channel array, falling back to the
   // legacy single id for rooms not yet migrated to a binding list.
@@ -168,7 +162,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
         borderRadius: 1.5,
         outline: isCurrent ? `2px solid` : "none",
         outlineColor: "primary.main",
-        p: 1,
+        p: 0.75,
         transition: "border-color 120ms ease, box-shadow 120ms ease",
         boxShadow: deco?.glow
           ? `0 0 14px 3px ${(deco.accentColor ?? room.color ?? "#7b1fa2")}55`
@@ -338,34 +332,15 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
 
       <Box
         sx={{
-          minHeight: 30,
-          mt: 0.75,
+          minHeight: 20,
+          mt: 0.25,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
         {users.length === 0 ? (
-          isDesk && (deskOwner || room.ownerEmail) ? (
-            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-              <Avatar
-                src={deskOwner?.imageUrl}
-                alt={deskOwner?.name ?? room.ownerEmail}
-                sx={{ width: 24, height: 24, fontSize: 12, opacity: 0.85 }}
-              >
-                {(deskOwner?.name ?? room.ownerEmail ?? "?").charAt(0).toUpperCase()}
-              </Avatar>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-              >
-                {deskOwner?.name ?? room.ownerEmail}
-              </Typography>
-            </Stack>
-          ) : (
-            <Typography variant="caption" color="text.disabled">empty</Typography>
-          )
+          <Typography variant="caption" color="text.disabled">empty</Typography>
         ) : (
           <AvatarGroup
             max={5}

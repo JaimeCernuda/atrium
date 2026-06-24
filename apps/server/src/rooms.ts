@@ -179,8 +179,10 @@ export async function seedRoomsIfEmpty(rooms: Room[]): Promise<void> {
 }
 
 export async function findRoomOwnedBy(email: string): Promise<string | null> {
+  // Only office-style owned rooms snap their owner in on arrival. Desk owners
+  // (students) are NOT auto-placed at their desk; they land in the Lobby.
   const row = await prisma.room.findFirst({
-    where: { ownerEmail: email },
+    where: { ownerEmail: email, NOT: { category: { in: ["Desks", "desks"] } } },
     select: { id: true },
   });
   return row?.id ?? null;
