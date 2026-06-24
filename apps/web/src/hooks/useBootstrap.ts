@@ -123,6 +123,17 @@ export function useBootstrap(): { loading: boolean } {
         // before connect would be dropped (autoConnect is off until connect()).
         socket.emit("zulip:fetch-channels");
         socket.emit("zulip:fetch-users");
+        // Re-fetch global history now that the user's Zulip queue exists. The
+        // bootstrap GET above ran before socket.connect(), so the server had no
+        // live ZulipQueueClient and fell back to the internal Message table even
+        // when Global is mapped to a Zulip channel+topic. Re-fetching here loads
+        // the real Zulip-backed history for a linked user.
+        fetch("/api/chat/global", { credentials: "include" })
+          .then((r) => (r.ok ? (r.json() as Promise<ChatMessage[]>) : null))
+          .then((msgs) => {
+            if (msgs) useStore.getState().setGlobalMessages(msgs);
+          })
+          .catch((err) => console.error(err));
       });
       socket.on("zulip:disconnected", () => useStore.getState().setZulipConnected(false));
       socket.on("zulip:error", ({ message }) => useStore.getState().setZulipError(message));

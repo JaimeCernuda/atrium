@@ -270,7 +270,12 @@ export class ZulipQueueClient extends EventEmitter {
 
   /** All active, human org members (bots and deactivated users excluded). */
   async fetchAllUsers(): Promise<ZulipUser[]> {
-    const res = (await this.request("/users")) as { members: ZulipMember[] };
+    // client_gravatar=false forces Zulip to return resolvable avatar_url values
+    // for Gravatar-backed users (otherwise avatar_url is null for the common
+    // case of users who never uploaded a custom avatar).
+    const res = (await this.request("/users?client_gravatar=false")) as {
+      members: ZulipMember[];
+    };
     return res.members
       .filter((m) => !m.is_bot && m.is_active)
       .map((m) => ({

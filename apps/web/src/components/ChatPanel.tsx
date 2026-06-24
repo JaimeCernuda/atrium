@@ -65,6 +65,9 @@ export function ChatPanel() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const me = useStore((s) => s.user);
+  const zulipSelfId = useStore((s) => s.zulipSelfId);
+  const globalZulipChannelId = useStore((s) => s.globalZulipChannelId);
+  const globalZulipTopicName = useStore((s) => s.globalZulipTopicName);
   const globalMessages = useStore((s) => s.globalMessages);
   const dmByUser = useStore((s) => s.dmByUser);
   const setDmMessages = useStore((s) => s.setDmMessages);
@@ -121,6 +124,17 @@ export function ChatPanel() {
 
   const messages =
     tab === "global" ? globalMessages : activeDmUser ? dmByUser[activeDmUser.id] ?? [] : [];
+
+  // When Global is mapped to a Zulip channel+topic and the user is linked,
+  // global messages carry Zulip sender ids (`zulip:<id>`), so own-vs-other
+  // styling must key on the Zulip self id rather than the Atrium user id.
+  // Internal DMs (and the unmapped/unlinked global) still use the Atrium id.
+  const globalIsZulip =
+    zulipLinked && globalZulipChannelId != null && globalZulipTopicName != null;
+  const listMeId =
+    tab === "global" && globalIsZulip && zulipSelfId != null
+      ? `zulip:${zulipSelfId}`
+      : me?.id ?? "";
 
   return (
     <Drawer
@@ -211,7 +225,7 @@ export function ChatPanel() {
               <Typography variant="body2">{activeDmUser.name}</Typography>
             </Stack>
           )}
-          <MessageList messages={messages} meId={me?.id ?? ""} />
+          <MessageList messages={messages} meId={listMeId} />
           <Composer
             disabled={tab === "dm" && !activeDmUser}
             onSend={tab === "global" ? sendGlobal : sendDm}
