@@ -1,75 +1,126 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
-  Avatar,
+  Badge,
   Box,
-  Button,
   Drawer,
   IconButton,
-  List,
-  ListItemButton,
   Stack,
   Tab,
   Tabs,
-  TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
-import SendIcon from "@mui/icons-material/Send";
 import CloseIcon from "@mui/icons-material/Close";
-import AddIcon from "@mui/icons-material/Add";
-import type { ChatMessage, User } from "@atrium/shared";
 import { useStore } from "../store";
-import { UserSearchDialog } from "./UserSearchDialog";
-
-const DRAWER_WIDTH = 360;
-
-interface Conversation {
-  user: User;
-  lastMessageAt: string;
-  lastMessagePreview: string;
-}
+import { getSocket } from "../socket";
+import { clampDrawerWidth } from "../prefs";
+import { MessageList, Composer, openZulip } from "./zulip/chatPrimitives";
+import { ZulipDmView } from "./zulip/ZulipDmView";
+import { UnlinkedZulipFallback } from "./UnlinkedZulipFallback";
 
 export function ChatPanel() {
   const open = useStore((s) => s.chatOpen);
   const setChatOpen = useStore((s) => s.setChatOpen);
   const tab = useStore((s) => s.chatView);
   const setTab = useStore((s) => s.setChatView);
-  const activeDmUser = useStore((s) => s.activeDmUser);
-  const closeDm = useStore((s) => s.closeDm);
-  const openDmWith = useStore((s) => s.openDmWith);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const me = useStore((s) => s.user);
+  const zulipLinked = useStore((s) => s.zulipLinked);
+  const zulipSelfId = useStore((s) => s.zulipSelfId);
+  const globalZulipChannelId = useStore((s) => s.globalZulipChannelId);
+  const globalZulipTopicName = useStore((s) => s.globalZulipTopicName);
   const globalMessages = useStore((s) => s.globalMessages);
-  const dmByUser = useStore((s) => s.dmByUser);
-  const setDmMessages = useStore((s) => s.setDmMessages);
-  const appendDmMessage = useStore((s) => s.appendDmMessage);
+  const width = useStore((s) => s.chatPanelWidth);
+  const setChatPanelWidth = useStore((s) => s.setChatPanelWidth);
+  const unreadDms = useStore((s) => s.zulipUnreadDms);
+  const unreadGlobal = useStore((s) => s.zulipUnreadGlobal);
+  const removeZulipUnreadGlobal = useStore((s) => s.removeZulipUnreadGlobal);
+  const setZulipViewState = useStore((s) => s.setZulipViewState);
+
+  const dmUnreadCount = Object.keys(unreadDms).length;
 
   const onClose = () => setChatOpen(false);
-  const setActiveDmUser = (u: User | null) => {
-    if (u) openDmWith(u);
-    else closeDm();
-  };
 
-  const fetchConversations = () => {
-    fetch("/api/chat/dm/conversations", { credentials: "include" })
-      .then((r) => r.json())
-      .then((rows: Conversation[]) => setConversations(rows))
-      .catch(console.error);
-  };
+  // The drawer hosts only the Global and DMs tabs.
+  const drawerTab: "global" | "dm" = tab === "dm" || tab === "zulip-dm" ? "dm" : "global";
+
+  // Mirror drawer open/closed into the composite view-state so unread gating
+  // (Global + DMs live here) knows the surface is actually visible.
+  useEffect(() => {
+    setZulipViewState({ drawerOpen: open });
+  }, [open, setZulipViewState]);
+
+  // Mirror which drawer tab is showing. Switching to the DM list (no open
+  // conversation) clears any active dm thread; ZulipDmView sets it on open.
+  useEffect(() => {
+    if (!open) {
+      setZulipViewState({ chatView: null });
+      return;
+    }
+    if (drawerTab === "global") {
+      setZulipViewState({ chatView: "global", activeThread: null, activeThreadKey: null });
+    } else {
+      setZulipViewState({ chatView: "dm" });
+    }
+  }, [open, drawerTab, setZulipViewState]);
+
+  // Viewing the Global tab clears its unread count for the aggregate header
+  // badge. Runs when the drawer opens on Global and when the tab switches in.
+  const onGlobal = open && drawerTab === "global";
+  const tabFocused = useStore((s) => s.zulipViewState.tabFocused);
+  useEffect(() => {
+    if (onGlobal) removeZulipUnreadGlobal();
+  }, [onGlobal, removeZulipUnreadGlobal]);
+
+  // Global is a Zulip channel topic under the hood, so ground its read-state in
+  // Zulip too: when the Global tab is genuinely viewed (open AND tab focused),
+  // mark its mapped topic read so unread_msgs stays in sync. Re-runs on focus.
+  useEffect(() => {
+    if (!onGlobal || !tabFocused) return;
+    if (globalZulipChannelId == null || globalZulipTopicName == null) return;
+    getSocket().emit("zulip:mark-read", {
+      kind: "topic",
+      channelId: globalZulipChannelId,
+      topicName: globalZulipTopicName,
+    });
+  }, [onGlobal, tabFocused, globalZulipChannelId, globalZulipTopicName]);
+
+  // Drag the drawer's left edge to resize. We track the drag at the document
+  // level so the pointer can leave the 6px handle without dropping the gesture,
+  // and persist the clamped width once on release.
+  const dragging = useRef(false);
+  const onResizeDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragging.current = true;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (open && tab === "dm") fetchConversations();
-  }, [open, tab, dmByUser]);
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      // Drawer is anchored right: width grows as the pointer moves left.
+      setChatPanelWidth(clampDrawerWidth(window.innerWidth - e.clientX));
+    };
+    const onUp = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [setChatPanelWidth]);
 
-  useEffect(() => {
-    if (!activeDmUser) return;
-    if (dmByUser[activeDmUser.id]) return;
-    fetch(`/api/chat/dm/${activeDmUser.id}`, { credentials: "include" })
-      .then((r) => r.json())
-      .then((msgs: ChatMessage[]) => setDmMessages(activeDmUser.id, msgs))
-      .catch(console.error);
-  }, [activeDmUser, dmByUser, setDmMessages]);
+  // Both tabs are Zulip-only now. Global is Zulip-backed only when linked AND an
+  // admin has mapped it to a channel+topic; otherwise we explain rather than
+  // fall back to any internal chat.
+  const globalIsMapped = globalZulipChannelId != null && globalZulipTopicName != null;
+  const globalListMeId = zulipSelfId != null ? `zulip:${zulipSelfId}` : "";
 
   const sendGlobal = async (body: string) => {
     await fetch("/api/chat/global", {
@@ -80,22 +131,29 @@ export function ChatPanel() {
     });
   };
 
-  const sendDm = async (body: string) => {
-    if (!activeDmUser) return;
-    const res = await fetch(`/api/chat/dm/${activeDmUser.id}`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body }),
-    });
-    if (res.ok) {
-      const msg = (await res.json()) as ChatMessage;
-      appendDmMessage(msg);
-    }
-  };
+  const connectZulip = () => useStore.getState().setZulipLinkDialogOpen(true);
 
-  const messages =
-    tab === "global" ? globalMessages : activeDmUser ? dmByUser[activeDmUser.id] ?? [] : [];
+  const renderGlobal = () => {
+    if (!zulipLinked) {
+      return <UnlinkedZulipFallback onConnect={connectZulip} onOpenZulip={openZulip} />;
+    }
+    if (!globalIsMapped) {
+      return (
+        <Box sx={{ p: 3, flexGrow: 1, overflowY: "auto" }}>
+          <Typography variant="body2" color="text.secondary">
+            Global isn&apos;t mapped to a Zulip channel yet — an admin can set it
+            under Admin → Global.
+          </Typography>
+        </Box>
+      );
+    }
+    return (
+      <>
+        <MessageList messages={globalMessages} meId={globalListMeId} />
+        <Composer onSend={sendGlobal} />
+      </>
+    );
+  };
 
   return (
     <Drawer
@@ -103,162 +161,60 @@ export function ChatPanel() {
       open={open}
       onClose={onClose}
       variant="persistent"
-      PaperProps={{ sx: { width: DRAWER_WIDTH } }}
+      PaperProps={{ sx: { width, overflow: "hidden" } }}
     >
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 1, pl: 2 }}>
-        <Typography variant="h6">Chat</Typography>
-        <IconButton onClick={onClose} size="small">
-          <CloseIcon />
-        </IconButton>
-      </Stack>
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="fullWidth">
-        <Tab value="global" label="Global" />
-        <Tab value="dm" label="DMs" />
-      </Tabs>
-
-      {tab === "dm" && !activeDmUser ? (
-        <Box sx={{ flexGrow: 1, overflowY: "auto" }}>
-          <Box sx={{ p: 1.5 }}>
-            <Button
-              fullWidth
-              variant="outlined"
-              startIcon={<AddIcon />}
-              onClick={() => setSearchOpen(true)}
-            >
-              New message
-            </Button>
-          </Box>
-          <List dense>
-            {conversations.length === 0 && (
-              <Box sx={{ px: 2, pb: 2 }}>
-                <Typography variant="body2" color="text.secondary">
-                  No direct messages yet. Click <strong>New message</strong> to start one,
-                  or tap any user&apos;s avatar on a room card.
-                </Typography>
-              </Box>
-            )}
-            {conversations.map((c) => (
-              <ListItemButton key={c.user.id} onClick={() => setActiveDmUser(c.user)}>
-                <Avatar src={c.user.imageUrl} sx={{ width: 32, height: 32, mr: 1 }}>
-                  {c.user.name.charAt(0)}
-                </Avatar>
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography variant="body2">{c.user.name}</Typography>
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  >
-                    {c.lastMessagePreview}
-                  </Typography>
-                </Box>
-              </ListItemButton>
-            ))}
-          </List>
-          <UserSearchDialog
-            open={searchOpen}
-            onClose={() => setSearchOpen(false)}
-            onPick={(u) => {
-              setSearchOpen(false);
-              setActiveDmUser(u);
-            }}
-          />
-        </Box>
-      ) : (
-        <>
-          {tab === "dm" && activeDmUser && (
-            <Stack direction="row" alignItems="center" sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
-              <IconButton size="small" onClick={closeDm}>
-                <CloseIcon fontSize="small" />
-              </IconButton>
-              <Avatar src={activeDmUser.imageUrl} sx={{ width: 24, height: 24, mx: 1 }}>
-                {activeDmUser.name.charAt(0)}
-              </Avatar>
-              <Typography variant="body2">{activeDmUser.name}</Typography>
-            </Stack>
-          )}
-          <MessageList messages={messages} meId={me?.id ?? ""} />
-          <Composer
-            disabled={tab === "dm" && !activeDmUser}
-            onSend={tab === "global" ? sendGlobal : sendDm}
-          />
-        </>
-      )}
-    </Drawer>
-  );
-}
-
-function MessageList({ messages, meId }: { messages: ChatMessage[]; meId: string }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length]);
-
-  return (
-    <Box sx={{ flexGrow: 1, overflowY: "auto", p: 2 }}>
-      <Stack spacing={1.2}>
-        {messages.map((m) => (
-          <Stack
-            key={m.id}
-            direction={m.sender.id === meId ? "row-reverse" : "row"}
-            spacing={1}
-            alignItems="flex-end"
-          >
-            <Tooltip title={m.sender.name}>
-              <Avatar src={m.sender.imageUrl} sx={{ width: 28, height: 28 }}>
-                {m.sender.name.charAt(0)}
-              </Avatar>
-            </Tooltip>
-            <Box
-              sx={{
-                bgcolor: m.sender.id === meId ? "primary.main" : "action.hover",
-                color: m.sender.id === meId ? "primary.contrastText" : "text.primary",
-                px: 1.5,
-                py: 0.75,
-                borderRadius: 2,
-                maxWidth: "75%",
-                wordBreak: "break-word",
-              }}
-            >
-              <Typography variant="body2">{m.body}</Typography>
-            </Box>
-          </Stack>
-        ))}
-        <div ref={bottomRef} />
-      </Stack>
-    </Box>
-  );
-}
-
-function Composer({ disabled, onSend }: { disabled?: boolean; onSend: (body: string) => void }) {
-  const [body, setBody] = useState("");
-  const send = () => {
-    const trimmed = body.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
-    setBody("");
-  };
-  return (
-    <Stack direction="row" spacing={1} sx={{ p: 1, borderTop: 1, borderColor: "divider" }}>
-      <TextField
-        size="small"
-        fullWidth
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-          }
+      {/* Left-edge resize handle — drag to widen/narrow the drawer. */}
+      <Box
+        onMouseDown={onResizeDown}
+        sx={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 6,
+          cursor: "col-resize",
+          zIndex: 2,
+          "&:hover": { bgcolor: "action.hover" },
         }}
-        placeholder={disabled ? "Pick a conversation…" : "Type a message…"}
-        disabled={disabled}
-        multiline
-        maxRows={4}
       />
-      <IconButton color="primary" onClick={send} disabled={disabled}>
-        <SendIcon />
-      </IconButton>
-    </Stack>
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", pl: "6px" }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 1, pl: 2 }}>
+          <Typography variant="h6">Chat</Typography>
+          <IconButton onClick={onClose} size="small">
+            <CloseIcon />
+          </IconButton>
+        </Stack>
+        <Tabs value={drawerTab} onChange={(_, v) => setTab(v)} variant="fullWidth">
+          <Tab
+            value="global"
+            label={
+              <Badge
+                color="secondary"
+                badgeContent={unreadGlobal}
+                invisible={unreadGlobal === 0}
+                sx={{ "& .MuiBadge-badge": { right: -14, top: 2 } }}
+              >
+                Global
+              </Badge>
+            }
+          />
+          <Tab
+            value="dm"
+            label={
+              <Badge
+                color="secondary"
+                badgeContent={dmUnreadCount}
+                invisible={dmUnreadCount === 0}
+                sx={{ "& .MuiBadge-badge": { right: -14, top: 2 } }}
+              >
+                DMs
+              </Badge>
+            }
+          />
+        </Tabs>
+
+        {drawerTab === "dm" ? <ZulipDmView /> : renderGlobal()}
+      </Box>
+    </Drawer>
   );
 }

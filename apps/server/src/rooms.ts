@@ -15,7 +15,15 @@ function toApi(room: {
   ownerEmail: string | null;
   locked: boolean;
   decorations?: unknown;
+  zulipStreamId?: number | null;
+  zulipStreamIds?: number[];
+  superseded?: boolean;
 }): Room {
+  // Read-time union: the multi-channel array plus the legacy single column,
+  // de-duped and sorted. zulipStreamId stays as the first id for back-compat.
+  const ids = new Set<number>(room.zulipStreamIds ?? []);
+  if (room.zulipStreamId != null) ids.add(room.zulipStreamId);
+  const arr = Array.from(ids).sort((a, b) => a - b);
   return {
     id: room.id,
     name: room.name,
@@ -26,7 +34,74 @@ function toApi(room: {
     ownerEmail: room.ownerEmail ?? undefined,
     locked: room.locked,
     decorations: (room.decorations as OfficeDecoration | null) ?? undefined,
+    zulipStreamId: arr.length > 0 ? arr[0] : undefined,
+    zulipStreamIds: arr,
+    superseded: room.superseded ?? false,
   };
+}
+
+// Normalize an incoming ownerEmail field. Returns:
+//  - { set: false } when absent (leave column unchanged)
+//  - { set: true, value: string | null } when provided (empty/null clears).
+// Emails are lowercased + trimmed so desk-owner comparisons stay case-insensitive.
+function normalizeOwnerEmail(v: unknown): { set: false } | { set: true; value: string | null } {
+  if (v === undefined) return { set: false };
+  if (v === null) return { set: true, value: null };
+  if (typeof v !== "string") return { set: true, value: null };
+  const s = v.trim().toLowerCase();
+  return { set: true, value: s.length > 0 ? s : null };
+}
+
+// Case-insensitive owner check: a desk/office owner is matched by email
+// regardless of how the address was cased when stored or signed in.
+function isOwnerEmail(roomOwner: string | null, userEmail: string | undefined): boolean {
+  if (!roomOwner || !userEmail) return false;
+  return roomOwner.trim().toLowerCase() === userEmail.trim().toLowerCase();
+}
+
+// Normalize an incoming zulipStreamId field. Returns:
+//  - { set: false } when the field is absent (leave column unchanged)
+//  - { set: true, value: number | null } when explicitly provided (null clears)
+function normalizeStreamId(v: unknown): { set: false } | { set: true; value: number | null } {
+  if (v === undefined) return { set: false };
+  if (v === null) return { set: true, value: null };
+  const n = Number(v);
+  if (!Number.isInteger(n) || n <= 0) return { set: true, value: null };
+  return { set: true, value: n };
+}
+
+// Normalize an incoming zulipStreamIds array. Returns:
+//  - { set: false } when absent (leave bindings unchanged)
+//  - { set: true, value: number[] } when provided (null/[] clears all bindings)
+function normalizeStreamIds(v: unknown): { set: false } | { set: true; value: number[] } {
+  if (v === undefined) return { set: false };
+  if (v === null) return { set: true, value: [] };
+  if (!Array.isArray(v)) return { set: true, value: [] };
+  const ids = Array.from(
+    new Set(v.map(Number).filter((n) => Number.isInteger(n) && n > 0)),
+  ).sort((a, b) => a - b);
+  return { set: true, value: ids };
+}
+
+// Resolve the binding columns to write from an incoming body. The array is the
+// source of truth; the legacy single column is mirrored to the first id. Falls
+// back to the legacy single-field path for old clients that send only it.
+function streamWrite(body: {
+  zulipStreamIds?: unknown;
+  zulipStreamId?: unknown;
+}): { zulipStreamIds: number[]; zulipStreamId: number | null } | Record<string, never> {
+  const streams = normalizeStreamIds(body.zulipStreamIds);
+  if (streams.set) {
+    return { zulipStreamIds: streams.value, zulipStreamId: streams.value[0] ?? null };
+  }
+  const legacy = normalizeStreamId(body.zulipStreamId);
+  if (legacy.set) {
+    return {
+      zulipStreamId: legacy.value,
+      zulipStreamIds: legacy.value != null ? [legacy.value] : [],
+    };
+  }
+  return {};
 }
 
 const COLOR_TO_CATEGORY: Record<string, string> = {
@@ -104,8 +179,10 @@ export async function seedRoomsIfEmpty(rooms: Room[]): Promise<void> {
 }
 
 export async function findRoomOwnedBy(email: string): Promise<string | null> {
+  // Only office-style owned rooms snap their owner in on arrival. Desk owners
+  // (students) are NOT auto-placed at their desk; they land in the Lobby.
   const row = await prisma.room.findFirst({
-    where: { ownerEmail: email },
+    where: { ownerEmail: email, NOT: { category: { in: ["Desks", "desks"] } } },
     select: { id: true },
   });
   return row?.id ?? null;
@@ -120,7 +197,7 @@ export async function isRoomEnterableBy(
     select: { locked: true, ownerEmail: true },
   });
   if (!room) return { ok: false, reason: "missing" };
-  if (room.locked && room.ownerEmail !== email) return { ok: false, reason: "locked" };
+  if (room.locked && !isOwnerEmail(room.ownerEmail, email)) return { ok: false, reason: "locked" };
   return { ok: true };
 }
 
@@ -139,6 +216,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       return reply.code(400).send({ error: "id and name required" });
     }
     const maxOrder = await prisma.room.aggregate({ _max: { sortOrder: true } });
+    const owner = normalizeOwnerEmail(body.ownerEmail);
     const created = await prisma.room.create({
       data: {
         id: body.id,
@@ -147,6 +225,9 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
         category: body.category ?? null,
         disableMeeting: body.disableMeeting ?? false,
         externalMeetUrl: body.externalMeetUrl ?? null,
+        ...(owner.set ? { ownerEmail: owner.value } : {}),
+        ...(body.superseded !== undefined && { superseded: !!body.superseded }),
+        ...streamWrite(body),
         sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
       },
     });
@@ -157,6 +238,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { id } = req.params;
     const body = req.body ?? {};
+    const owner = normalizeOwnerEmail(body.ownerEmail);
     const updated = await prisma.room.update({
       where: { id },
       data: {
@@ -165,6 +247,9 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
         ...(body.category !== undefined && { category: body.category ?? null }),
         ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
         ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
+        ...(owner.set ? { ownerEmail: owner.value } : {}),
+        ...(body.superseded !== undefined && { superseded: !!body.superseded }),
+        ...streamWrite(body),
       },
     });
     return toApi(updated);
@@ -184,13 +269,100 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       if (!user) return reply;
       const room = await prisma.room.findUnique({ where: { id: req.params.id } });
       if (!room) return reply.code(404).send({ error: "room not found" });
-      const isOwner = room.ownerEmail === user.email;
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
       if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
         return reply.code(403).send({ error: "only the owner or an admin can lock this room" });
       }
       const updated = await prisma.room.update({
         where: { id: req.params.id },
         data: { locked: !!req.body?.locked },
+      });
+      return toApi(updated);
+    },
+  );
+
+  // Rename a room you own (a desk owner renames their own desk) or any room if
+  // you can manage rooms. Distinct from the admin PATCH so a desk owner who is
+  // not an admin still gets a rename path without the full manage_rooms gate.
+  app.patch<{ Params: { id: string }; Body: { name: string } }>(
+    "/api/rooms/:id/name",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
+        return reply.code(403).send({ error: "only the owner or an admin can rename this room" });
+      }
+      const name = String(req.body?.name ?? "").trim().slice(0, 100);
+      if (!name) return reply.code(400).send({ error: "name required" });
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { name },
+      });
+      return toApi(updated);
+    },
+  );
+
+  // Set a room's meeting link. Owner-or-admin, mirroring the rename gate so a
+  // desk owner can edit their own desk's meeting URL from the customize dialog
+  // without the full manage_rooms gate. An empty/null value clears it.
+  app.patch<{ Params: { id: string }; Body: { externalMeetUrl?: string | null } }>(
+    "/api/rooms/:id/meet-url",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
+        return reply
+          .code(403)
+          .send({ error: "only the owner or an admin can set this room's meeting URL" });
+      }
+      const raw = req.body?.externalMeetUrl;
+      let value: string | null = null;
+      if (typeof raw === "string" && raw.trim().length > 0) {
+        try {
+          const u = new URL(raw.trim());
+          if (u.protocol !== "http:" && u.protocol !== "https:") {
+            return reply.code(400).send({ error: "meeting URL must be http(s)" });
+          }
+          value = raw.trim().slice(0, 500);
+        } catch {
+          return reply.code(400).send({ error: "invalid meeting URL" });
+        }
+      }
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { externalMeetUrl: value },
+      });
+      return toApi(updated);
+    },
+  );
+
+  // Set the Zulip channels bound to a room/desk. Owner-or-admin, mirroring the
+  // rename gate: a desk owner may edit only their own desk (isOwnerEmail is
+  // false for any other room), while admins (manage_rooms) may edit any room.
+  app.patch<{ Params: { id: string }; Body: { zulipStreamIds?: number[] | null } }>(
+    "/api/rooms/:id/channels",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
+        return reply
+          .code(403)
+          .send({ error: "only the owner or an admin can set this room's channels" });
+      }
+      const streams = normalizeStreamIds(req.body?.zulipStreamIds);
+      const value = streams.set ? streams.value : [];
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { zulipStreamIds: value, zulipStreamId: value[0] ?? null },
       });
       return toApi(updated);
     },
@@ -240,7 +412,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       const room = await prisma.room.findUnique({ where: { id: req.params.id } });
       if (!room) return reply.code(404).send({ error: "room not found" });
       // Strictly owner-only — admins cannot overwrite someone else's personal office decorations
-      if (room.ownerEmail !== user.email) {
+      if (!isOwnerEmail(room.ownerEmail, user.email)) {
         return reply.code(403).send({ error: "only the room owner can decorate this room" });
       }
       const b = req.body ?? {};

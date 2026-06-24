@@ -13,6 +13,8 @@ import { groupByZone, ZONES, type Zone } from "../layout";
 // Bottom row splits meetings (wider) from status (narrower).
 const DESKTOP_AREAS = `
   "entry    entry"
+  "desks    desks"
+  "projects projects"
   "research research"
   "offices  offices"
   "meetings status"
@@ -23,6 +25,8 @@ const DESKTOP_COLUMNS = "2fr 1fr";
 // regardless of viewport width.
 const ZONE_COLUMNS: Record<string, { base: number; mobile: number }> = {
   entry: { base: 2, mobile: 2 },
+  desks: { base: 4, mobile: 2 },
+  projects: { base: 4, mobile: 2 },
   research: { base: 4, mobile: 2 },
   offices: { base: 5, mobile: 2 },
   meetings: { base: 4, mobile: 2 },
@@ -40,7 +44,12 @@ export function Office() {
   const navigate = useNavigate();
   useNotifications();
 
-  const byZone = useMemo(() => groupByZone(rooms), [rooms]);
+  // A superseded room (a "Papers" research room replaced by a per-student desk)
+  // is HIDDEN from the floorplan — never deleted. Filtering here, before
+  // grouping, is the single source of truth for the reversible `superseded`
+  // flag and keeps superseded rooms out of every zone (including "other").
+  const visibleRooms = useMemo(() => rooms.filter((r) => !r.superseded), [rooms]);
+  const byZone = useMemo(() => groupByZone(visibleRooms), [visibleRooms]);
 
   const enterRoom = (roomId: string) => {
     getSocket().emit("presence:join", roomId);
@@ -48,6 +57,23 @@ export function Office() {
   };
 
   const onDmUser = (target: PresenceUser | User) => {
+    const s = useStore.getState();
+    // When Zulip is linked, route DMs through Zulip (the unified DM surface).
+    // Match the office user to a Zulip member by Atrium id or email.
+    if (s.zulipLinked && s.zulipSelfId != null) {
+      const zu = s.zulipUsers.find(
+        (u) =>
+          u.atriumUserId === target.id ||
+          u.email.toLowerCase() === target.email.toLowerCase(),
+      );
+      if (zu) {
+        s.setChatOpen(true);
+        s.setChatView("dm");
+        s.setZulipActiveDmParticipants([s.zulipSelfId, zu.zulipUserId]);
+        return;
+      }
+      s.setZulipError("That person isn't in the Zulip org yet.");
+    }
     openDmWith({
       id: target.id,
       name: target.name,
@@ -72,6 +98,7 @@ export function Office() {
         )}
 
         <Box
+          data-tour="office"
           sx={{
             display: "grid",
             gap: { xs: 2, md: 3 },

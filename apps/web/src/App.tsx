@@ -14,12 +14,15 @@ import { Login } from "./pages/Login";
 import { Office } from "./pages/Office";
 import { Metrics } from "./pages/Metrics";
 import { AdminRooms } from "./pages/AdminRooms";
+import { AdminGlobalSettings } from "./pages/AdminGlobalSettings";
+import { AdminUserGroupPolicy } from "./pages/AdminUserGroupPolicy";
 import { AdminBotTokens } from "./pages/AdminBotTokens";
 import { AdminRoles } from "./pages/AdminRoles";
 import { AdminMembers } from "./pages/AdminMembers";
 import { DigestList } from "./pages/Digest/List";
 import { DigestDay } from "./pages/Digest/Day";
 import { Reminders } from "./pages/Reminders";
+import { Zulip } from "./pages/Zulip";
 import { Submit } from "./pages/Submit";
 import { SubmitEdit } from "./pages/SubmitEdit";
 import { AdminSubmissions } from "./pages/AdminSubmissions";
@@ -67,6 +70,40 @@ export function App() {
           '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif',
       },
       components: {
+        MuiCssBaseline: {
+          styleOverrides: {
+            // Theme-consistent scrollbars app-wide (light + dark). Firefox uses
+            // scrollbar-color; WebKit/Blink use the ::-webkit-scrollbar pseudos.
+            "*": {
+              scrollbarWidth: "thin",
+              scrollbarColor:
+                mode === "dark"
+                  ? "rgba(255,255,255,0.22) transparent"
+                  : "rgba(0,0,0,0.26) transparent",
+            },
+            "*::-webkit-scrollbar": {
+              width: 10,
+              height: 10,
+            },
+            "*::-webkit-scrollbar-track": {
+              backgroundColor: "transparent",
+            },
+            "*::-webkit-scrollbar-thumb": {
+              borderRadius: 8,
+              border: "2px solid transparent",
+              backgroundClip: "content-box",
+              backgroundColor:
+                mode === "dark" ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.26)",
+            },
+            "*::-webkit-scrollbar-thumb:hover": {
+              backgroundColor:
+                mode === "dark" ? "rgba(255,255,255,0.34)" : "rgba(0,0,0,0.40)",
+            },
+            "*::-webkit-scrollbar-corner": {
+              backgroundColor: "transparent",
+            },
+          },
+        },
         MuiAppBar: {
           styleOverrides: {
             colorDefault: ({ theme: t }) => ({
@@ -101,6 +138,7 @@ export function App() {
                 <Route path="/" element={<Office />} />
                 <Route path="/digest" element={<DigestList />} />
                 <Route path="/reminders" element={<Reminders />} />
+                <Route path="/zulip" element={<Zulip />} />
                 {can(user, "submit") && <Route path="/submit" element={<Submit />} />}
                 {can(user, "submit") && <Route path="/submit/edit/:id" element={<SubmitEdit />} />}
                 <Route
@@ -127,6 +165,37 @@ export function App() {
                     element={
                       <AppShell>
                         <AdminRooms />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_rooms") && (
+                  <Route
+                    path="/admin/zulip"
+                    element={
+                      <AppShell>
+                        <AdminGlobalSettings />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_rooms") && (
+                  // Back-compat: the old "Global chat" path still resolves.
+                  <Route
+                    path="/admin/global"
+                    element={
+                      <AppShell>
+                        <AdminGlobalSettings />
+                      </AppShell>
+                    }
+                  />
+                )}
+                {can(user, "manage_rooms") && (
+                  <Route
+                    path="/admin/user-groups"
+                    element={
+                      <AppShell>
+                        <AdminUserGroupPolicy />
                       </AppShell>
                     }
                   />

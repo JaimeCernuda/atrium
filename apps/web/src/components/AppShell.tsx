@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import {
   AppBar,
   Badge,
@@ -15,25 +15,28 @@ import {
 import ChatIcon from "@mui/icons-material/Chat";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import type { PermissionKey } from "@atrium/shared";
-import { can, useStore } from "../store";
-import { SettingsMenu } from "./SettingsMenu";
+import { can, unreadChannelTotal, useStore } from "../store";
 import { UserMenu } from "./UserMenu";
+import { ZulipLinkDialog } from "./ZulipLinkDialog";
 import { ChatPanel } from "./ChatPanel";
+import { WelcomeTour } from "./WelcomeTour";
 import { PingSnackbar } from "./PingSnackbar";
 import { AdminMenu } from "./AdminMenu";
-
-const DRAWER_WIDTH = 360;
+import { useZulipNotifications } from "../hooks/useZulipNotifications";
+import { useZulipNotificationPermission } from "../hooks/useZulipNotificationPermission";
 
 const TABS: Array<{ label: string; path: string; permission?: PermissionKey }> = [
   { label: "Office", path: "/" },
   { label: "Digest", path: "/digest" },
   { label: "Reminders", path: "/reminders" },
+  { label: "Zulip", path: "/zulip" },
 ];
 
 function matchTab(pathname: string): string {
   if (pathname === "/") return "/";
   if (pathname.startsWith("/digest")) return "/digest";
   if (pathname.startsWith("/reminders")) return "/reminders";
+  if (pathname.startsWith("/zulip")) return "/zulip";
   return "";
 }
 
@@ -46,12 +49,60 @@ export function AppShell({ children }: Props) {
   const user = useStore((s) => s.user);
   const chatOpen = useStore((s) => s.chatOpen);
   const setChatOpen = useStore((s) => s.setChatOpen);
+  const chatPanelWidth = useStore((s) => s.chatPanelWidth);
+  // Aggregate header badge: unread channel topics + unread DM conversations +
+  // unread Global messages. The channel total was previously missing, which is
+  // why the bubble showed no number when only channels were unread.
+  const unreadDmCount = useStore((s) => Object.keys(s.zulipUnreadDms).length);
+  const unreadGlobal = useStore((s) => s.zulipUnreadGlobal);
+  const unreadTopics = useStore((s) => s.zulipUnreadTopics);
+  const channelTotal = unreadChannelTotal(unreadTopics);
+  const totalUnread = channelTotal + unreadDmCount + unreadGlobal;
+  const setZulipViewState = useStore((s) => s.setZulipViewState);
+
+  // Browser notifications + sound + unread for live Zulip traffic, on every
+  // authed page (this shell wraps them all; Login is outside it).
+  useZulipNotifications();
+  useZulipNotificationPermission();
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = matchTab(location.pathname);
+
+  // Track tab focus so unread gating only treats a thread as read when the tab
+  // is actually visible.
+  useEffect(() => {
+    const onVisibility = () =>
+      setZulipViewState({ tabFocused: document.visibilityState === "visible" });
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+    window.addEventListener("blur", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+      window.removeEventListener("blur", onVisibility);
+    };
+  }, [setZulipViewState]);
+
+  // Whether the full /zulip page is the active surface. Leaving it drops any
+  // active channel thread so a backgrounded channel re-counts unread.
+  useEffect(() => {
+    const onZulipPage = activeTab === "/zulip";
+    if (onZulipPage) {
+      setZulipViewState({ zulipPageActive: true });
+    } else {
+      const v = useStore.getState().zulipViewState;
+      setZulipViewState({
+        zulipPageActive: false,
+        ...(v.activeThread === "channel"
+          ? { activeThread: null, activeThreadKey: null }
+          : {}),
+      });
+    }
+  }, [activeTab, setZulipViewState]);
 
   return (
     <Box
@@ -63,7 +114,7 @@ export function AppShell({ children }: Props) {
               ? t.transitions.duration.enteringScreen
               : t.transitions.duration.leavingScreen,
           }),
-        pr: { xs: 0, md: chatOpen ? `${DRAWER_WIDTH}px` : 0 },
+        pr: { xs: 0, md: chatOpen ? `${chatPanelWidth}px` : 0 },
       }}
     >
       <AppBar
@@ -109,9 +160,29 @@ export function AppShell({ children }: Props) {
               <Tab
                 key={t.path}
                 value={t.path}
-                label={t.label}
+                label={
+                  t.path === "/zulip" ? (
+                    <Badge
+                      color="secondary"
+                      badgeContent={channelTotal}
+                      invisible={channelTotal === 0}
+                      sx={{ "& .MuiBadge-badge": { right: -12, top: 2 } }}
+                    >
+                      {t.label}
+                    </Badge>
+                  ) : (
+                    t.label
+                  )
+                }
                 component={RouterLink}
                 to={t.path}
+                data-tour={
+                  t.path === "/zulip"
+                    ? "zulip-tab"
+                    : t.path === "/digest"
+                      ? "digest-tab"
+                      : undefined
+                }
                 sx={{ minHeight: 40, py: 0.5 }}
               />
             ))}
@@ -128,14 +199,18 @@ export function AppShell({ children }: Props) {
                 <IconButton
                   onClick={() => setChatOpen(true)}
                   aria-label="Open chat"
+                  data-tour="chat-button"
                   size="small"
                 >
-                  <Badge color="secondary" variant="dot" invisible>
+                  <Badge
+                    color="secondary"
+                    badgeContent={totalUnread}
+                    invisible={totalUnread === 0}
+                  >
                     <ChatIcon />
                   </Badge>
                 </IconButton>
                 <AdminMenu />
-                <SettingsMenu />
                 <UserMenu />
               </>
             )}
@@ -147,6 +222,12 @@ export function AppShell({ children }: Props) {
 
       <ChatPanel />
       <PingSnackbar />
+      {/* Mounted at the root so "Connect Zulip" opens from anywhere (avatar menu OR
+          the unlinked Zulip/DM tab), not just while the avatar menu is open. */}
+      <ZulipLinkDialog />
+      {/* First-run guided tour; overlays every authed page. Auto-starts once,
+          re-triggerable from the avatar menu. */}
+      <WelcomeTour />
     </Box>
   );
 }

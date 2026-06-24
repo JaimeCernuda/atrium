@@ -16,6 +16,10 @@ model User {
   role             String            @default("external") // soft ref to Role.id
   createdAt        DateTime          @default(now())
   lastSeenAt       DateTime?
+  zulipEmail       String?           // Zulip email; defaults to Atrium email at link time
+  zulipUserId      Int?              // Zulip internal user id (cache for validation)
+  zulipApiKeyEnc   String?           // AES-256-GCM, base64(salt||iv||tag||ciphertext)
+  zulipLinkedAt    DateTime?         // when the key was last set
   presenceSessions PresenceSession[]
   meetingSessions  MeetingSession[]
   sentMessages     Message[]         @relation("SentMessages")
@@ -46,6 +50,9 @@ model Room {
   ownerEmail      String?
   locked          Boolean  @default(false)
   decorations     Json?
+  zulipStreamId   Int?      // legacy single binding; mirrored to zulipStreamIds[0]
+  zulipStreamIds  Int[]     @default([]) // multi-channel bindings (source of truth)
+  superseded      Boolean   @default(false) // hidden from floorplan when a desk supersedes it (reversible)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -162,4 +169,16 @@ model BotToken {
   lastUsedAt DateTime?
 
   @@index([tokenHash])
+}
+
+// Org-wide singleton settings. Currently holds the Global-chat -> Zulip
+// channel+topic mapping (admin-editable at /admin/global). Always exactly one
+// row, id "singleton".
+model Settings {
+  id                   String   @id @default("singleton")
+  globalZulipChannelId Int?
+  globalZulipTopicName String?
+  userGroupFeatured    String?
+  userGroupSecondary   String?
+  updatedAt            DateTime @updatedAt
 }

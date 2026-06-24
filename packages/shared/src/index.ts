@@ -41,6 +41,11 @@ export interface Room {
   ownerEmail?: string;
   locked?: boolean;
   decorations?: OfficeDecoration;
+  zulipStreamId?: number;
+  zulipStreamIds?: number[];
+  // A "Papers" research room superseded by a per-student desk is hidden from the
+  // floorplan (reversible, never deleted) — see layout.ts zoneFor().
+  superseded?: boolean;
 }
 
 /**
@@ -89,7 +94,12 @@ export interface Member {
   roleName: string;
   createdAt: string;
   lastSeenAt: string | null;
+  // The auto-join office (category Offices) this member owns, if any. Owning an
+  // office snaps the member into it on login.
   office: { id: string; name: string } | null;
+  // The manual-join desk (category Desks) this member owns, if any. A desk does
+  // NOT auto-join; the owner lands in the Lobby and clicks to enter.
+  desk: { id: string; name: string } | null;
   submissionCount: number;
 }
 
@@ -223,6 +233,108 @@ export interface Submission {
   updatedAt: string;
 }
 
+// ───── Zulip integration ─────
+export interface ZulipLinkStatus {
+  linked: boolean;
+  zulipEmail: string | null;
+  zulipUserId?: number;
+  linkedAt?: string; // ISO
+}
+
+export interface ZulipChannel {
+  id: number;          // Zulip stream_id
+  name: string;        // stream name (canonical key for narrows + sending)
+  display_name: string;// description or name, for UI
+  subscribed: boolean;
+  // Zulip 11+ channel-folder membership. null/undefined => ungrouped ("Other").
+  folderId?: number | null;
+}
+
+/** A Zulip channel folder/category (Zulip 11+). Channels carry `folderId`. */
+export interface ZulipChannelFolder {
+  id: number;
+  name: string;
+  order?: number; // Zulip's display order; lower sorts first
+}
+
+export interface ZulipTopic {
+  name: string;
+  maxId: number; // max message id in topic
+  lastActivityTime?: string; // ISO; optional, may be absent
+}
+
+/** A Zulip org member, matched to an Atrium user by email when one exists. */
+export interface ZulipUser {
+  zulipUserId: number;
+  atriumUserId: string | null; // null = in Zulip but not (yet) an Atrium user
+  name: string;
+  email: string;
+  imageUrl?: string;
+}
+
+/** A custom Zulip user group (system "role:*" groups are excluded server-side). */
+export interface ZulipUserGroup {
+  id: number;
+  name: string;
+  description: string;
+  memberIds: number[];
+}
+
+/** Org-wide mapping of the Atrium "Global" chat onto one Zulip channel+topic. */
+export interface GlobalChatConfig {
+  channelId: number | null;
+  topicName: string | null;
+}
+
+/**
+ * One row in the user's recent direct-message list — a 1:1 or group DM,
+ * keyed by the full participant set. `title` is the other participants'
+ * names joined by ", "; the client renders this list most-recent-first.
+ */
+export interface ZulipDmConversation {
+  conversationKey: string; // participantKey(full participant set incl. self)
+  participantIds: number[]; // sorted numeric ids, including self
+  title: string; // "Alice" (1:1) or "Alice, Bob, Carol" (group)
+  // Newest message in the conversation. Optional: conversations surfaced ONLY
+  // by Zulip's recent_private_conversations (i.e. older than the recent-message
+  // window) carry no snippet — just a title and ordering id. Rows backed by a
+  // fetched message always have both.
+  lastMessage?: ChatMessage;
+  lastMessageTs?: string; // ISO timestamp of lastMessage, when known
+  // Zulip message id used as a stable ordering key, always present. For
+  // window-backed rows this is the last message's id; for snippet-less rows it
+  // is recent_private_conversations' max_message_id.
+  lastMessageId: number;
+}
+
+/**
+ * Canonical key for a direct-message conversation: the FULL participant set
+ * (including the current user), as sorted numeric Zulip ids joined by ",".
+ * Load-bearing: server dispatch, server send-echo, and the web store must all
+ * derive the same key for a conversation or messages will split.
+ */
+export function participantKey(ids: number[]): string {
+  return [...new Set(ids)].sort((a, b) => a - b).join(",");
+}
+
+// Zulip messages are surfaced as the existing ChatMessage shape so the
+// frontend MessageList renders them unchanged. createdAt is ISO (server
+// converts Zulip's epoch-seconds). id is the Zulip message id as a string.
+export interface ZulipMessagePayload {
+  channelId: number;
+  topicName: string;
+  message: ChatMessage;
+}
+
+export interface ZulipReactionPayload {
+  channelId: number;
+  topicName: string;
+  messageId: number;
+  emojiName: string;
+  userId: number;
+  op: "add" | "remove";
+}
+
 export type ServerToClientEvents = {
   "presence:snapshot": (state: Record<string, PresenceUser[]>) => void;
   "presence:enter": (evt: PresenceEvent) => void;
@@ -235,6 +347,33 @@ export type ServerToClientEvents = {
 
   "ping:received": (payload: PingPayload) => void;
   "knock:received": (payload: KnockPayload) => void;
+
+  "zulip:connected": () => void;
+  "zulip:disconnected": () => void;
+  "zulip:error": (payload: { message: string }) => void;
+  "zulip:channels": (payload: {
+    channels: ZulipChannel[];
+    folders: ZulipChannelFolder[];
+  }) => void;
+  "zulip:topics": (payload: { channelId: number; topics: ZulipTopic[] }) => void;
+  "zulip:message": (payload: ZulipMessagePayload) => void;
+  "zulip:reaction": (payload: ZulipReactionPayload) => void;
+  "zulip:users": (payload: { users: ZulipUser[] }) => void;
+  "zulip:user-groups": (payload: { groups: ZulipUserGroup[] }) => void;
+  "zulip:dm": (payload: {
+    participantKey: string;
+    participantIds: number[];
+    title: string;
+    message: ChatMessage;
+  }) => void;
+  "zulip:fetch-dm-conversations": (payload: {
+    conversations: ZulipDmConversation[];
+  }) => void;
+  // Zulip-grounded unread state from /register's unread_msgs. Keys: channel
+  // topics `${channelId}:${topicName}`, DMs participantKey. Replaces local maps.
+  "zulip:unread-snapshot": (payload: { topics: string[]; dms: string[] }) => void;
+  // Best-effort live read-flag sync: keys that Zulip marked read elsewhere.
+  "zulip:read-flags": (payload: { topics?: string[]; dms?: string[] }) => void;
 };
 
 export type ClientToServerEvents = {
@@ -244,4 +383,41 @@ export type ClientToServerEvents = {
 
   "ping:send": (targetUserId: string) => void;
   "knock:send": (roomId: string) => void;
+
+  "zulip:fetch-channels": (
+    cb?: (err: string | null, channels?: ZulipChannel[]) => void,
+  ) => void;
+  "zulip:fetch-topics": (
+    channelId: number,
+    cb?: (err: string | null, topics?: ZulipTopic[]) => void,
+  ) => void;
+  "zulip:fetch-history": (
+    params: { channelId: number; topicName: string; numBefore?: number },
+    cb?: (err: string | null, messages?: ChatMessage[]) => void,
+  ) => void;
+  "zulip:send": (
+    params: { channelId: number; topicName: string; body: string },
+    cb?: (err: string | null, result?: { id: number }) => void,
+  ) => void;
+  "zulip:fetch-users": (
+    cb?: (err: string | null, users?: ZulipUser[]) => void,
+  ) => void;
+  "zulip:send-dm": (
+    params: { participantIds: number[]; body: string },
+    cb?: (err: string | null, result?: { id: number }) => void,
+  ) => void;
+  "zulip:fetch-dm-history": (
+    params: { participantIds: number[]; numBefore?: number },
+    cb?: (err: string | null, messages?: ChatMessage[]) => void,
+  ) => void;
+  "zulip:fetch-dm-conversations": (
+    cb?: (err: string | null, conversations?: ZulipDmConversation[]) => void,
+  ) => void;
+  // Mark a viewed thread read on Zulip so unread_msgs stays in sync across
+  // devices and a re-register snapshot doesn't resurrect it as unread.
+  "zulip:mark-read": (
+    payload:
+      | { kind: "topic"; channelId: number; topicName: string }
+      | { kind: "dm"; participantIds: number[] },
+  ) => void;
 };

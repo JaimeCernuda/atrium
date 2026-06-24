@@ -32,6 +32,169 @@ export async function upsertUser(
   });
 }
 
+// ───── Zulip account linking ─────
+// The API key is stored AES-256-GCM-encrypted (see zulip-crypto.ts). These
+// helpers take/return only the ENCRYPTED form — the plaintext key never enters
+// or leaves the DB layer except through the crypto module at the boundary.
+
+export async function linkZulipAccount(
+  userId: string,
+  data: { zulipEmail: string; zulipUserId: number; zulipApiKeyEnc: string },
+): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      zulipEmail: data.zulipEmail,
+      zulipUserId: data.zulipUserId,
+      zulipApiKeyEnc: data.zulipApiKeyEnc,
+      zulipLinkedAt: new Date(),
+    },
+  });
+}
+
+/** Returns the encrypted key + email for a user, or null if not linked. */
+export async function getZulipKey(
+  userId: string,
+): Promise<{ zulipEmail: string; zulipApiKeyEnc: string; zulipUserId: number | null } | null> {
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { zulipEmail: true, zulipApiKeyEnc: true, zulipUserId: true },
+  });
+  if (!row || !row.zulipApiKeyEnc || !row.zulipEmail) return null;
+  return {
+    zulipEmail: row.zulipEmail,
+    zulipApiKeyEnc: row.zulipApiKeyEnc,
+    zulipUserId: row.zulipUserId,
+  };
+}
+
+export async function unlinkZulipAccount(userId: string): Promise<void> {
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      zulipEmail: null,
+      zulipUserId: null,
+      zulipApiKeyEnc: null,
+      zulipLinkedAt: null,
+    },
+  });
+}
+
+/** Link metadata for status display — never includes the key itself. */
+export async function getZulipLink(
+  userId: string,
+): Promise<{ zulipEmail: string | null; zulipUserId: number | null; zulipLinkedAt: Date | null; linked: boolean }> {
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { zulipEmail: true, zulipUserId: true, zulipLinkedAt: true, zulipApiKeyEnc: true },
+  });
+  return {
+    zulipEmail: row?.zulipEmail ?? null,
+    zulipUserId: row?.zulipUserId ?? null,
+    zulipLinkedAt: row?.zulipLinkedAt ?? null,
+    linked: Boolean(row?.zulipApiKeyEnc),
+  };
+}
+
+// ───── Global-chat -> Zulip channel+topic mapping (org-wide singleton) ─────
+
+export async function getGlobalChatConfig(): Promise<{
+  channelId: number | null;
+  topicName: string | null;
+}> {
+  const row = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  return {
+    channelId: row?.globalZulipChannelId ?? null,
+    topicName: row?.globalZulipTopicName ?? null,
+  };
+}
+
+export async function setGlobalChatConfig(
+  channelId: number | null,
+  topicName: string | null,
+): Promise<void> {
+  await prisma.settings.upsert({
+    where: { id: "singleton" },
+    update: { globalZulipChannelId: channelId, globalZulipTopicName: topicName },
+    create: { id: "singleton", globalZulipChannelId: channelId, globalZulipTopicName: topicName },
+  });
+}
+
+// ───── Zulip user-group visibility policy (org-wide singleton) ─────
+//
+// "featured" groups are shown expanded, "secondary" collapsed; every group not
+// listed in either is implicitly "hidden" (reachable only via search). Each
+// column stores a JSON array of Zulip user-group ids.
+
+export interface UserGroupPolicy {
+  featured: number[];
+  secondary: number[];
+}
+
+const DEFAULT_USER_GROUP_POLICY: UserGroupPolicy = {
+  featured: [301997, 316940, 1545694],
+  secondary: [301998, 1453788],
+};
+
+/**
+ * Resolve one policy tier from its stored column.
+ *   - null/undefined (never configured)  → fall back to the default seed.
+ *   - "[]" (admin explicitly emptied it)  → stays empty.
+ *   - "[1,2,3]"                           → those ids.
+ *   - malformed JSON                      → empty (and flagged).
+ */
+function parseIdColumn(
+  raw: string | null | undefined,
+  column: string,
+  fallback: number[],
+): number[] {
+  // Never configured: seed the default so grouping works out of the box.
+  if (raw == null) return [...fallback];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    // An explicit array (including the empty array) is honored as-is.
+    return Array.isArray(parsed) ? (parsed as number[]) : [...fallback];
+  } catch {
+    // Don't log the raw value — it may be large/garbled. Just flag the column.
+    console.warn(`getUserGroupPolicy: malformed JSON in Settings.${column}; treating as empty`);
+    return [];
+  }
+}
+
+export async function getUserGroupPolicy(): Promise<UserGroupPolicy> {
+  const row = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  // No Settings row at all → defaults. With a row, each tier independently falls
+  // back to its default seed when its column is null/unset, but a column holding
+  // an explicit "[]" stays empty (admin intentionally emptied that tier).
+  if (!row) return { ...DEFAULT_USER_GROUP_POLICY };
+  return {
+    featured: parseIdColumn(
+      row.userGroupFeatured,
+      "userGroupFeatured",
+      DEFAULT_USER_GROUP_POLICY.featured,
+    ),
+    secondary: parseIdColumn(
+      row.userGroupSecondary,
+      "userGroupSecondary",
+      DEFAULT_USER_GROUP_POLICY.secondary,
+    ),
+  };
+}
+
+export async function setUserGroupPolicy(
+  featured: number[],
+  secondary: number[],
+): Promise<UserGroupPolicy> {
+  const f = JSON.stringify(featured);
+  const s = JSON.stringify(secondary);
+  await prisma.settings.upsert({
+    where: { id: "singleton" },
+    update: { userGroupFeatured: f, userGroupSecondary: s },
+    create: { id: "singleton", userGroupFeatured: f, userGroupSecondary: s },
+  });
+  return { featured, secondary };
+}
+
 /** Mark a user as seen now (called on socket connect, not just OAuth login). */
 export async function touchLastSeen(userId: string): Promise<void> {
   await prisma.user.update({

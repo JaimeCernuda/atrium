@@ -20,6 +20,7 @@ function toMember(
   row: MemberRow,
   roleName: string,
   office: { id: string; name: string } | null,
+  desk: { id: string; name: string } | null,
   submissionCount: number,
 ): Member {
   return {
@@ -32,8 +33,15 @@ function toMember(
     createdAt: row.createdAt.toISOString(),
     lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
     office,
+    desk,
     submissionCount,
   };
+}
+
+// A room counts as a desk by its category; everything else owned (including
+// category Offices) is treated as the member's auto-join office.
+function isDeskCategory(category: string | null): boolean {
+  return (category ?? "").toLowerCase() === "desks";
 }
 
 export async function registerMembers(app: FastifyInstance, config: Config): Promise<void> {
@@ -58,13 +66,20 @@ export async function registerMembers(app: FastifyInstance, config: Config): Pro
       prisma.role.findMany({ select: { id: true, name: true } }),
       prisma.room.findMany({
         where: { ownerEmail: { not: null } },
-        select: { id: true, name: true, ownerEmail: true },
+        select: { id: true, name: true, ownerEmail: true, category: true },
       }),
       prisma.submission.groupBy({ by: ["submitterId"], _count: { submitterId: true } }),
     ]);
 
     const roleNames = new Map(roles.map((r) => [r.id, r.name]));
-    const officeByEmail = new Map(offices.map((o) => [o.ownerEmail!, { id: o.id, name: o.name }]));
+    // Split owned rooms into the auto-join office vs the manual-join desk so the
+    // admin view can label and assign each independently.
+    const officeByEmail = new Map<string, { id: string; name: string }>();
+    const deskByEmail = new Map<string, { id: string; name: string }>();
+    for (const o of offices) {
+      const target = isDeskCategory(o.category) ? deskByEmail : officeByEmail;
+      target.set(o.ownerEmail!, { id: o.id, name: o.name });
+    }
     const subsByUser = new Map(subCounts.map((s) => [s.submitterId, s._count.submitterId]));
 
     return reply.send({
@@ -73,6 +88,7 @@ export async function registerMembers(app: FastifyInstance, config: Config): Pro
           u,
           roleNames.get(u.role) ?? u.role,
           officeByEmail.get(u.email) ?? null,
+          deskByEmail.get(u.email) ?? null,
           subsByUser.get(u.id) ?? 0,
         ),
       ),
@@ -82,7 +98,7 @@ export async function registerMembers(app: FastifyInstance, config: Config): Pro
   // ---- assign role and/or office ----
   app.patch<{
     Params: { id: string };
-    Body: { role?: string; officeRoomId?: string | null };
+    Body: { role?: string; officeRoomId?: string | null; deskRoomId?: string | null };
   }>("/api/members/:id", async (req, reply) => {
     const user = await requirePermission(req, reply, "manage_members", config.session.cookieName);
     if (!user) return;
@@ -108,15 +124,34 @@ export async function registerMembers(app: FastifyInstance, config: Config): Pro
     }
 
     if (body.officeRoomId !== undefined) {
-      // Clear any office currently owned by this user.
+      // Clear only the auto-join office (non-desk) currently owned by this user,
+      // leaving any desk ownership untouched.
       await prisma.room.updateMany({
-        where: { ownerEmail: target.email },
+        where: { ownerEmail: target.email, NOT: { category: { in: ["Desks", "desks"] } } },
         data: { ownerEmail: null },
       });
       if (body.officeRoomId !== null) {
         const room = await prisma.room.findUnique({ where: { id: body.officeRoomId } });
         if (!room) return reply.code(400).send({ error: "unknown_room" });
         // One owner per office: taking over a room displaces its previous owner.
+        await prisma.room.update({
+          where: { id: room.id },
+          data: { ownerEmail: target.email },
+        });
+      }
+    }
+
+    if (body.deskRoomId !== undefined) {
+      // Clear only the manual-join desk currently owned by this user, leaving
+      // any office ownership untouched.
+      await prisma.room.updateMany({
+        where: { ownerEmail: target.email, category: { in: ["Desks", "desks"] } },
+        data: { ownerEmail: null },
+      });
+      if (body.deskRoomId !== null) {
+        const room = await prisma.room.findUnique({ where: { id: body.deskRoomId } });
+        if (!room) return reply.code(400).send({ error: "unknown_room" });
+        // One owner per desk: taking it over displaces the previous owner.
         await prisma.room.update({
           where: { id: room.id },
           data: { ownerEmail: target.email },
@@ -138,15 +173,26 @@ export async function registerMembers(app: FastifyInstance, config: Config): Pro
       },
     });
     if (!refreshed) return reply.code(404).send({ error: "not_found" });
-    const [roleRow, office, subCount] = await Promise.all([
+    const [roleRow, ownedRooms, subCount] = await Promise.all([
       prisma.role.findUnique({ where: { id: refreshed.role }, select: { name: true } }),
-      prisma.room.findFirst({
+      prisma.room.findMany({
         where: { ownerEmail: refreshed.email },
-        select: { id: true, name: true },
+        select: { id: true, name: true, category: true },
       }),
       prisma.submission.count({ where: { submitterId: refreshed.id } }),
     ]);
-    return reply.send(toMember(refreshed, roleRow?.name ?? refreshed.role, office, subCount));
+    const office =
+      ownedRooms.find((r) => !isDeskCategory(r.category)) ?? null;
+    const desk = ownedRooms.find((r) => isDeskCategory(r.category)) ?? null;
+    return reply.send(
+      toMember(
+        refreshed,
+        roleRow?.name ?? refreshed.role,
+        office ? { id: office.id, name: office.name } : null,
+        desk ? { id: desk.id, name: desk.name } : null,
+        subCount,
+      ),
+    );
   });
 
   // ---- a member's submissions (self, or anyone with view_all_submissions) ----

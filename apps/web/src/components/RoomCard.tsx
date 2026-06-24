@@ -3,8 +3,15 @@ import {
   AvatarGroup,
   Badge,
   Box,
+  Button,
   Card,
+  Checkbox,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
   IconButton,
   Menu,
   MenuItem,
@@ -18,6 +25,7 @@ import ArticleIcon from "@mui/icons-material/Article";
 import HeadsetMicIcon from "@mui/icons-material/HeadsetMic";
 import MeetingRoomIcon from "@mui/icons-material/MeetingRoom";
 import VideocamIcon from "@mui/icons-material/Videocam";
+import ForumIcon from "@mui/icons-material/Forum";
 import CheckIcon from "@mui/icons-material/Check";
 import DoorbellIcon from "@mui/icons-material/Doorbell";
 import LockIcon from "@mui/icons-material/Lock";
@@ -30,6 +38,7 @@ import type { PresenceUser, Room } from "@atrium/shared";
 import { getSocket } from "../socket";
 import { OfficeDecorateDialog } from "./OfficeDecorateDialog";
 import { buildCardBg, buildBorderSx, LINK_ICON } from "./officeDecoUtils";
+import { firstName } from "../names";
 
 interface Props {
   room: Room;
@@ -45,9 +54,28 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   const me = useStore((s) => s.user);
   const setRooms = useStore((s) => s.setRooms);
   const rooms = useStore((s) => s.rooms);
+  const setZulipActiveChannel = useStore((s) => s.setZulipActiveChannel);
+  const zulipChannels = useStore((s) => s.zulipChannels);
+  const zulipUsers = useStore((s) => s.zulipUsers);
   const navigate = useNavigate();
 
-  const isOwner = !!me?.email && room.ownerEmail === me.email;
+  // A desk IS a person: category "Desks", bound to a student's project channel.
+  const isDesk = (room.category ?? "").toLowerCase() === "desks";
+
+  // The room's bound channels: the multi-channel array, falling back to the
+  // legacy single id for rooms not yet migrated to a binding list.
+  const boundChannelIds = room.zulipStreamIds?.length
+    ? room.zulipStreamIds
+    : room.zulipStreamId != null
+      ? [room.zulipStreamId]
+      : [];
+  const channelById = new Map(zulipChannels.map((c) => [c.id, c]));
+
+  const isOwner =
+    !!me?.email &&
+    !!room.ownerEmail &&
+    room.ownerEmail.toLowerCase() === me.email.toLowerCase();
+  const canManageRooms = can(me, "manage_rooms");
   const locked = !!room.locked;
   const canEnter = !locked || isOwner;
   const deco = room.decorations;
@@ -92,6 +120,8 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
     <>
     <Card
       variant="outlined"
+      data-tour="room-card"
+      {...(isOwner ? { "data-tour-own-room": "" } : {})}
       sx={{
         ...buildBorderSx(deco ?? {}),
         ...(deco ? buildCardBg(deco) : {}),
@@ -100,7 +130,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
         borderRadius: 1.5,
         outline: isCurrent ? `2px solid` : "none",
         outlineColor: "primary.main",
-        p: 1,
+        p: 0.75,
         transition: "border-color 120ms ease, box-shadow 120ms ease",
         boxShadow: deco?.glow
           ? `0 0 14px 3px ${(deco.accentColor ?? room.color ?? "#7b1fa2")}55`
@@ -131,19 +161,33 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
               textTransform: deco?.nameUppercase ? "uppercase" : undefined,
             }}
           >
-            {room.name}
+            {isDesk ? firstName(room.name) : room.name}
           </Typography>
         </Stack>
         <Stack direction="row" spacing={0}>
           {isOwner && (
-            <Tooltip title="Decorate your office">
-              <IconButton size="small" onClick={() => setDecorateOpen(true)}>
+            <Tooltip title={isDesk ? "Customize your desk" : "Customize your office"}>
+              <IconButton
+                size="small"
+                data-tour="desk-customize"
+                onClick={() => setDecorateOpen(true)}
+              >
                 <PaletteIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           )}
           {isOwner && (
-            <Tooltip title={locked ? "Unlock office" : "Lock office (only you can enter; others must knock)"}>
+            <Tooltip
+              title={
+                locked
+                  ? isDesk
+                    ? "Unlock desk"
+                    : "Unlock office"
+                  : isDesk
+                    ? "Lock desk (only you can enter; others must knock)"
+                    : "Lock office (only you can enter; others must knock)"
+              }
+            >
               <IconButton size="small" onClick={toggleLock} color={locked ? "warning" : "default"}>
                 {locked ? <LockIcon fontSize="small" /> : <LockOpenIcon fontSize="small" />}
               </IconButton>
@@ -157,7 +201,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
             </Tooltip>
           )}
           <Tooltip title={isCurrent ? "You're here" : canEnter ? "Enter room" : "Locked"}>
-            <span>
+            <span data-tour="enter-room">
               <IconButton size="small" onClick={onEnterRoom} disabled={isCurrent || !canEnter}>
                 {isCurrent ? (
                   <CheckIcon fontSize="small" />
@@ -171,13 +215,38 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           </Tooltip>
           {!room.disableMeeting && room.externalMeetUrl && (
             <Tooltip title="Enter meeting">
-              <IconButton size="small" color="primary" onClick={openMeeting}>
+              <IconButton size="small" color="primary" data-tour="meeting-button" onClick={openMeeting}>
                 <VideocamIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           )}
         </Stack>
       </Stack>
+
+      {/* One chip per bound channel — a direct jump into each in the Zulip client. */}
+      {boundChannelIds.length > 0 && (
+        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+          {boundChannelIds.map((id) => {
+            const ch = channelById.get(id);
+            return (
+              <Tooltip key={id} title={`Open #${ch?.name ?? id}`}>
+                <Chip
+                  icon={<ForumIcon sx={{ fontSize: 14 }} />}
+                  label={`# ${ch?.name ?? id}`}
+                  size="small"
+                  clickable
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setZulipActiveChannel(id, null);
+                    navigate("/zulip");
+                  }}
+                  sx={{ fontSize: 11, height: 22, maxWidth: "100%" }}
+                />
+              </Tooltip>
+            );
+          })}
+        </Stack>
+      )}
 
       {/* Motto line */}
       {deco?.motto && (
@@ -210,8 +279,8 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
 
       <Box
         sx={{
-          minHeight: 30,
-          mt: 0.75,
+          minHeight: 20,
+          mt: 0.25,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -226,8 +295,9 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
             sx={{ "& .MuiAvatar-root": { width: 30, height: 30, fontSize: 13 } }}
           >
             {users.map((u) => (
-              <Tooltip key={u.id} title={`${u.name}${u.inMeeting ? " · in meeting" : ""}`}>
+              <Tooltip key={u.id} title={`${firstName(u.name)}${u.inMeeting ? " · in meeting" : ""}`}>
                 <Box
+                  data-tour="presence-avatar"
                   onClick={(e) => setMenuState({ anchor: e.currentTarget, user: u })}
                   sx={{
                     position: "relative",
@@ -239,7 +309,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
                 >
                   <Avatar
                     src={u.imageUrl}
-                    alt={u.name}
+                    alt={firstName(u.name)}
                     sx={{
                       width: 30,
                       height: 30,
@@ -293,7 +363,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
       )}
 
       <Menu anchorEl={menuState?.anchor} open={!!menuState} onClose={() => setMenuState(null)}>
-        <MenuItem disabled>{menuState?.user.name}</MenuItem>
+        <MenuItem disabled>{menuState ? firstName(menuState.user.name) : ""}</MenuItem>
         <MenuItem onClick={() => menuState && pingUser(menuState.user.id)}>
           <NotificationsActiveIcon fontSize="small" sx={{ mr: 1 }} />
           Ping to talk

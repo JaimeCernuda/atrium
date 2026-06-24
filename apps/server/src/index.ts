@@ -9,6 +9,7 @@ import type { User } from "@atrium/shared";
 import { loadConfig } from "./config.js";
 import { registerAuth } from "./auth.js";
 import { createPresenceServer, type Broadcaster } from "./presence.js";
+import type { ZulipManager } from "./zulip-manager.js";
 import { closeOrphanedSessions } from "./db.js";
 import { registerMetrics } from "./metrics.js";
 import { registerRooms, seedRoomsIfEmpty } from "./rooms.js";
@@ -20,29 +21,58 @@ import { registerBotTokens } from "./bot-tokens.js";
 import { registerSubmissions } from "./submissions.js";
 import { registerRoles, seedRolesIfEmpty } from "./roles.js";
 import { registerMembers } from "./members.js";
+import { registerZulipLink } from "./zulip-link.js";
+import { processLevelZulipCache } from "./zulip-process-cache.js";
 
 const config = loadConfig();
 
 const app = Fastify({ logger: true });
 const broadcasterRef: { current: Broadcaster | null } = { current: null };
+// The presence server owns the single ZulipManager; chat.ts reads it through
+// this ref to reroute Global chat to Zulip. Filled in once presence is built.
+const zulipRef: { current: ZulipManager | null } = { current: null };
 
 const avatarDir = process.env.AVATAR_DIR ?? "/data/avatars";
 mkdirSync(avatarDir, { recursive: true });
 
-await app.register(cors, { origin: true, credentials: true });
+// Lock CORS to an explicit allowlist. `origin: true` reflects any caller's
+// Origin and, with credentials, lets ANY website script credentialed requests
+// (including the multipart upload-file endpoint) against a linked user's
+// session. The allowlist is the app's own public origin plus any extras from
+// CORS_ORIGINS, and localhost dev origins when running in development.
+const corsOrigins = new Set<string>([config.publicUrl]);
+for (const extra of (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean)) {
+  corsOrigins.add(extra);
+}
+if (process.env.NODE_ENV === "development") {
+  corsOrigins.add("http://localhost:5173");
+  corsOrigins.add("http://127.0.0.1:5173");
+}
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // Same-origin / non-browser requests (no Origin header) are allowed.
+    if (!origin || corsOrigins.has(origin)) return cb(null, true);
+    cb(new Error("Not allowed by CORS"), false);
+  },
+  credentials: true,
+});
 await app.register(cookie);
 await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024, files: 15 } });
 await registerAuth(app, config, broadcasterRef);
 await registerAvatars(app, config, avatarDir, broadcasterRef);
 await registerRooms(app, config);
 await registerMetrics(app, config);
-await registerChat(app, config, broadcasterRef);
+await registerChat(app, config, broadcasterRef, zulipRef);
 await registerDigest(app, config);
 await registerReminders(app, config);
 await registerBotTokens(app, config);
 await registerSubmissions(app, config);
 await registerRoles(app, config);
 await registerMembers(app, config);
+await registerZulipLink(app, config);
 await seedRoomsIfEmpty(config.rooms);
 await seedRolesIfEmpty();
 await closeOrphanedSessions();
@@ -72,8 +102,19 @@ if (existsSync(staticRoot)) {
 
 await app.listen({ port: config.port, host: "0.0.0.0" });
 
-const { io, broadcaster } = createPresenceServer(app.server);
+const { io, broadcaster, zulip } = createPresenceServer(app.server, config);
 broadcasterRef.current = broadcaster;
+zulipRef.current = zulip;
+// Stop the process-level Zulip cache sweep on shutdown so the interval doesn't
+// keep the event loop ticking during a graceful exit.
+for (const sig of ["SIGTERM", "SIGINT"] as const) {
+  process.once(sig, () => {
+    processLevelZulipCache.stopEvictionLoop();
+    io.close();
+    app.close().finally(() => process.exit(0));
+  });
+}
+
 io.use((socket, next) => {
   const rawCookie = socket.request.headers.cookie ?? "";
   const match = new RegExp(`(?:^|;\\s*)${config.session.cookieName}=([^;]+)`).exec(rawCookie);
