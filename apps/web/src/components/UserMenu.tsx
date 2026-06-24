@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Avatar,
   Box,
@@ -44,6 +44,8 @@ export function UserMenu() {
   const zulipLinked = useStore((s) => s.zulipLinked);
   const setZulipLinkDialogOpen = useStore((s) => s.setZulipLinkDialogOpen);
   const setWelcomeTourOpen = useStore((s) => s.setWelcomeTourOpen);
+  const userMenuOpen = useStore((s) => s.userMenuOpen);
+  const setUserMenuOpen = useStore((s) => s.setUserMenuOpen);
   const themeMode = useStore((s) => s.prefs.themeMode);
   const setThemeMode = useStore((s) => s.setThemeMode);
   const notificationsEnabled = useStore((s) => s.prefs.notificationsEnabled);
@@ -61,6 +63,22 @@ export function UserMenu() {
   const [error, setError] = useState<string | null>(null);
   const [cropperFile, setCropperFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  // The welcome tour opens this menu via the store so it can anchor coachmarks
+  // to the menu's items. When the store flag flips on we sync our local anchor
+  // to the avatar button; when the user closes the menu we clear the flag too.
+  const menuOpen = !!anchor || userMenuOpen;
+  useEffect(() => {
+    if (userMenuOpen && !anchor && buttonRef.current) {
+      setAnchor(buttonRef.current);
+    }
+  }, [userMenuOpen, anchor]);
+
+  const closeMenu = () => {
+    setAnchor(null);
+    if (userMenuOpen) setUserMenuOpen(false);
+  };
 
   const openProfile = () => {
     if (!user) return;
@@ -68,7 +86,7 @@ export function UserMenu() {
     setImageUrl(user.imageUrl);
     setError(null);
     setProfileOpen(true);
-    setAnchor(null);
+    closeMenu();
   };
 
   const saveNameOnly = async () => {
@@ -168,6 +186,7 @@ export function UserMenu() {
   return (
     <>
       <IconButton
+        ref={buttonRef}
         size="small"
         data-tour="user-menu"
         onClick={(e) => setAnchor(e.currentTarget)}
@@ -177,21 +196,32 @@ export function UserMenu() {
         </Avatar>
       </IconButton>
 
-      <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
+      <Menu
+        anchorEl={anchor}
+        open={menuOpen}
+        // While the welcome tour is driving the menu, ignore backdrop/Escape
+        // closes so the menu stays put for the tour to anchor against. The tour
+        // itself closes it when it leaves the menu steps; menu items still close
+        // it via closeMenu directly.
+        onClose={() => {
+          if (!userMenuOpen) closeMenu();
+        }}
+      >
         <Box sx={{ px: 2, py: 1, maxWidth: 260 }}>
           <Typography variant="body1" noWrap>{user.name}</Typography>
           <Typography variant="caption" color="text.secondary" noWrap>{user.email}</Typography>
         </Box>
         <Divider />
-        <MenuItem onClick={openProfile}>
+        <MenuItem data-tour="menu-profile" onClick={openProfile}>
           <ListItemIcon>
             <AccountCircleIcon fontSize="small" />
           </ListItemIcon>
           Edit profile
         </MenuItem>
         <MenuItem
+          data-tour="menu-submissions"
           onClick={() => {
-            setAnchor(null);
+            closeMenu();
             navigate("/members/me/submissions");
           }}
         >
@@ -202,7 +232,7 @@ export function UserMenu() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            setAnchor(null);
+            closeMenu();
             navigate("/");
             // Let the office route render so the tour's anchors exist before it
             // tries to position over them.
@@ -216,8 +246,9 @@ export function UserMenu() {
         </MenuItem>
         <Divider />
         <MenuItem
+          data-tour="menu-connect-zulip"
           onClick={() => {
-            setAnchor(null);
+            closeMenu();
             setZulipLinkDialogOpen(true);
           }}
         >
@@ -227,7 +258,7 @@ export function UserMenu() {
           {zulipLinked ? "Zulip connected" : "Connect Zulip"}
         </MenuItem>
         <Divider />
-        <Typography variant="caption" sx={{ px: 2, color: "text.secondary" }}>
+        <Typography variant="caption" data-tour="menu-theme" sx={{ px: 2, color: "text.secondary" }}>
           Settings
         </Typography>
         <MenuItem selected={themeMode === "light"} onClick={() => pickTheme("light")}>
@@ -251,7 +282,11 @@ export function UserMenu() {
 
         <Divider />
 
-        <MenuItem onClick={toggleNotifications} disabled={!supportsNotifications()}>
+        <MenuItem
+          data-tour="menu-notifications"
+          onClick={toggleNotifications}
+          disabled={!supportsNotifications()}
+        >
           <ListItemIcon>
             <NotificationsIcon fontSize="small" />
           </ListItemIcon>

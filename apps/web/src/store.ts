@@ -128,6 +128,10 @@ interface AtriumState {
   // ── First-run welcome walkthrough ──
   welcomeTourOpen: boolean;
   setWelcomeTourOpen: (open: boolean) => void;
+  // Lets the tour programmatically open the avatar/user menu so it can anchor
+  // its coachmarks to the menu's items (notifications, Connect Zulip, etc.).
+  userMenuOpen: boolean;
+  setUserMenuOpen: (open: boolean) => void;
 
   // ── Global -> Zulip channel+topic mapping ──
   globalZulipChannelId: number | null;
@@ -361,6 +365,8 @@ export const useStore = create<AtriumState>((set, get) => ({
 
   welcomeTourOpen: false,
   setWelcomeTourOpen: (welcomeTourOpen) => set({ welcomeTourOpen }),
+  userMenuOpen: false,
+  setUserMenuOpen: (userMenuOpen) => set({ userMenuOpen }),
 
   globalZulipChannelId: null,
   globalZulipTopicName: null,

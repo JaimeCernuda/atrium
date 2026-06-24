@@ -158,6 +158,8 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
     <>
     <Card
       variant="outlined"
+      data-tour="room-card"
+      {...(isOwner ? { "data-tour-own-room": "" } : {})}
       sx={{
         ...buildBorderSx(deco ?? {}),
         ...(deco ? buildCardBg(deco) : {}),
@@ -224,7 +226,11 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           )}
           {isOwner && (
             <Tooltip title={isDesk ? "Decorate your desk" : "Decorate your office"}>
-              <IconButton size="small" onClick={() => setDecorateOpen(true)}>
+              <IconButton
+                size="small"
+                data-tour="desk-customize"
+                onClick={() => setDecorateOpen(true)}
+              >
                 <PaletteIcon fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -254,7 +260,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
             </Tooltip>
           )}
           <Tooltip title={isCurrent ? "You're here" : canEnter ? "Enter room" : "Locked"}>
-            <span>
+            <span data-tour="enter-room">
               <IconButton size="small" onClick={onEnterRoom} disabled={isCurrent || !canEnter}>
                 {isCurrent ? (
                   <CheckIcon fontSize="small" />
@@ -268,7 +274,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           </Tooltip>
           {!room.disableMeeting && room.externalMeetUrl && (
             <Tooltip title="Enter meeting">
-              <IconButton size="small" color="primary" onClick={openMeeting}>
+              <IconButton size="small" color="primary" data-tour="meeting-button" onClick={openMeeting}>
                 <VideocamIcon fontSize="small" />
               </IconButton>
             </Tooltip>
@@ -369,6 +375,7 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
             {users.map((u) => (
               <Tooltip key={u.id} title={`${u.name}${u.inMeeting ? " · in meeting" : ""}`}>
                 <Box
+                  data-tour="presence-avatar"
                   onClick={(e) => setMenuState({ anchor: e.currentTarget, user: u })}
                   sx={{
                     position: "relative",
