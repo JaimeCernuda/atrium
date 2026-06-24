@@ -18,6 +18,7 @@ import type { PermissionKey } from "@atrium/shared";
 import { can, unreadChannelTotal, useStore } from "../store";
 import { SettingsMenu } from "./SettingsMenu";
 import { UserMenu } from "./UserMenu";
+import { ZulipLinkDialog } from "./ZulipLinkDialog";
 import { ChatPanel } from "./ChatPanel";
 import { PingSnackbar } from "./PingSnackbar";
 import { AdminMenu } from "./AdminMenu";
@@ -214,6 +215,9 @@ export function AppShell({ children }: Props) {
 
       <ChatPanel />
       <PingSnackbar />
+      {/* Mounted at the root so "Connect Zulip" opens from anywhere (avatar menu OR
+          the unlinked Zulip/DM tab), not just while the avatar menu is open. */}
+      <ZulipLinkDialog />
     </Box>
   );
 }

@@ -24,12 +24,14 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import { useNavigate } from "react-router-dom";
 import type { User } from "@atrium/shared";
 import { useStore } from "../store";
+import ChatBubbleOutlineIcon from "@mui/icons-material/ChatBubbleOutline";
 import { AvatarCropper } from "./AvatarCropper";
-import { ZulipLinkDialog } from "./ZulipLinkDialog";
 
 export function UserMenu() {
   const user = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
+  const zulipLinked = useStore((s) => s.zulipLinked);
+  const setZulipLinkDialogOpen = useStore((s) => s.setZulipLinkDialogOpen);
   const navigate = useNavigate();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -157,7 +159,17 @@ export function UserMenu() {
           My submissions
         </MenuItem>
         <Divider />
-        <ZulipLinkDialog />
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            setZulipLinkDialogOpen(true);
+          }}
+        >
+          <ListItemIcon>
+            <ChatBubbleOutlineIcon fontSize="small" />
+          </ListItemIcon>
+          {zulipLinked ? "Zulip connected" : "Connect Zulip"}
+        </MenuItem>
         <Divider />
         <MenuItem onClick={logout}>
           <ListItemIcon>
