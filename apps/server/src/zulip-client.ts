@@ -296,10 +296,12 @@ export class ZulipQueueClient extends EventEmitter {
         description: string;
         members: number[];
         is_system_group?: boolean;
+        // Zulip 12.x (feature level 506) marks retired groups deactivated.
+        deactivated?: boolean;
       }>;
     };
     return res.user_groups
-      .filter((g) => !g.is_system_group && !/^role:/i.test(g.name))
+      .filter((g) => !g.is_system_group && !g.deactivated && !/^role:/i.test(g.name))
       .map((g) => ({
         id: g.id,
         name: g.name,

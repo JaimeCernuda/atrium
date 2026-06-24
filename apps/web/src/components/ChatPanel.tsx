@@ -545,6 +545,9 @@ function ZulipDmView() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // "Others" (people outside any featured/secondary group) stays hidden until
+  // the reader asks to see everyone. Search ignores this gate (see below).
+  const [showEveryone, setShowEveryone] = useState(false);
 
   const usersById = new Map(users.map((u) => [u.zulipUserId, u]));
   const activeKey = activeParticipants ? participantKey(activeParticipants) : null;
@@ -602,14 +605,22 @@ function ZulipDmView() {
   // action for group DMs. Search matches across everyone.
   const allBuckets = buildBuckets(users, groups, policy, selfId);
   const searching = searchText.trim().length > 0;
-  const buckets = searching ? filterBucketsBySearch(allBuckets, searchText) : allBuckets;
+  // The "others" bucket (hidden-group members + ungrouped people) is gated
+  // behind "Show everyone" when not searching. Search reaches everyone, so
+  // while searching every matching bucket — others included — is shown.
+  const hasOthers = allBuckets.some((b) => b.tier === "others");
+  const visibleBuckets =
+    searching || showEveryone ? allBuckets : allBuckets.filter((b) => b.tier !== "others");
+  const buckets = searching ? filterBucketsBySearch(visibleBuckets, searchText) : visibleBuckets;
 
   // Default expansion: featured expanded; secondary + others collapsed. While
   // searching, every matching bucket is force-expanded.
   const isOpen = (b: DmBucket): boolean => {
     if (searching) return true;
     if (b.id in collapsed) return !collapsed[b.id];
-    return b.tier === "featured";
+    // Featured is expanded by default; "others" expands when freshly revealed
+    // via "Show everyone"; secondary stays collapsed-but-visible.
+    return b.tier === "featured" || (b.tier === "others" && showEveryone);
   };
   const toggle = (id: string) => setCollapsed((c) => ({ ...c, [id]: !(c[id] ?? false) }));
 
@@ -709,6 +720,22 @@ function ZulipDmView() {
             );
           })}
         </List>
+      )}
+      {/* Gate for the "Others" section: only when not searching and the bucket
+          exists. Search already surfaces everyone, so the toggle is hidden. */}
+      {!searching && hasOthers && (
+        <Box sx={{ px: 2, pb: 2, pt: 0.5 }}>
+          <Button
+            fullWidth
+            size="small"
+            variant="text"
+            startIcon={showEveryone ? <ExpandMoreIcon /> : <ChevronRightIcon />}
+            onClick={() => setShowEveryone((v) => !v)}
+            sx={{ justifyContent: "flex-start", color: "text.secondary" }}
+          >
+            {showEveryone ? "Hide everyone else" : "Show everyone"}
+          </Button>
+        </Box>
       )}
       <NewGroupDmDialog
         open={composeOpen}

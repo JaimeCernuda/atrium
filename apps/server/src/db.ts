@@ -136,15 +136,28 @@ const DEFAULT_USER_GROUP_POLICY: UserGroupPolicy = {
   secondary: [301998, 1453788],
 };
 
+/** Parse a stored JSON id-array column, treating malformed JSON as empty. */
+function parseIdColumn(raw: string | null | undefined, column: string): number[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as number[]) : [];
+  } catch {
+    // Don't log the raw value — it may be large/garbled. Just flag the column.
+    console.warn(`getUserGroupPolicy: malformed JSON in Settings.${column}; treating as empty`);
+    return [];
+  }
+}
+
 export async function getUserGroupPolicy(): Promise<UserGroupPolicy> {
   const row = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  // The policy is a single unit: only seed defaults when there is no Settings
+  // row at all (policy was never set). If a row exists, a null/missing column
+  // coalesces to [] so an admin who intentionally empties a tier keeps it empty.
+  if (!row) return { ...DEFAULT_USER_GROUP_POLICY };
   return {
-    featured: row?.userGroupFeatured
-      ? (JSON.parse(row.userGroupFeatured) as number[])
-      : DEFAULT_USER_GROUP_POLICY.featured,
-    secondary: row?.userGroupSecondary
-      ? (JSON.parse(row.userGroupSecondary) as number[])
-      : DEFAULT_USER_GROUP_POLICY.secondary,
+    featured: parseIdColumn(row.userGroupFeatured, "userGroupFeatured"),
+    secondary: parseIdColumn(row.userGroupSecondary, "userGroupSecondary"),
   };
 }
 
