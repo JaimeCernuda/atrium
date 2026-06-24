@@ -191,8 +191,13 @@ export function ZulipDmView() {
   // behind "Show everyone" when not searching. Search reaches everyone, so
   // while searching every matching bucket — others included — is shown.
   const hasOthers = allBuckets.some((b) => b.tier === "others");
-  const visibleBuckets =
-    searching || showEveryone ? allBuckets : allBuckets.filter((b) => b.tier !== "others");
+  const groupedBuckets = allBuckets.filter((b) => b.tier !== "others");
+  // Gate "others" behind "Show everyone" ONLY when there are grouped buckets to
+  // show first. If nothing is grouped (policy/groups not loaded yet, or nobody
+  // matches a featured/secondary group), show everyone so the list is never
+  // mysteriously empty.
+  const othersHidden = !searching && !showEveryone && groupedBuckets.length > 0;
+  const visibleBuckets = othersHidden ? groupedBuckets : allBuckets;
   const buckets = searching ? filterBucketsBySearch(visibleBuckets, searchText) : visibleBuckets;
 
   // Default expansion: featured expanded; secondary + others collapsed. While
@@ -266,7 +271,7 @@ export function ZulipDmView() {
       ) : buckets.length === 0 ? (
         <Box sx={{ px: 2, pb: 2 }}>
           <Typography variant="body2" color="text.secondary">
-            No people match &ldquo;{searchText}&rdquo;.
+            {searching ? <>No people match &ldquo;{searchText}&rdquo;.</> : "No people to show."}
           </Typography>
         </Box>
       ) : (
@@ -303,9 +308,10 @@ export function ZulipDmView() {
           })}
         </List>
       )}
-      {/* Gate for the "Others" section: only when not searching and the bucket
-          exists. Search already surfaces everyone, so the toggle is hidden. */}
-      {!searching && hasOthers && (
+      {/* "Show everyone" toggle: only when there ARE grouped buckets hiding the
+          others bucket. If nothing is grouped, others is already shown, so no
+          toggle. Search surfaces everyone, so it's hidden while searching. */}
+      {!searching && hasOthers && groupedBuckets.length > 0 && (
         <Box sx={{ px: 2, pb: 2, pt: 0.5 }}>
           <Button
             fullWidth
