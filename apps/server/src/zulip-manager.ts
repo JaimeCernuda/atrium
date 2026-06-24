@@ -44,6 +44,14 @@ export class ZulipManager {
   // Serializes concurrent acquire() calls per user so two rapid socket connects
   // can't create two clients for the same user.
   private readonly inflight = new Map<string, Promise<ZulipQueueClient | null>>();
+  // Net live socket demand per user, tracked SYNCHRONOUSLY by acquire()/release()
+  // so it stays correct across create()'s async gap. While a create() is in
+  // flight the entry doesn't exist yet, so refcount changes are recorded here
+  // instead; create() reads this as the client's starting refCount on resolve.
+  // A connect+disconnect that races the gap nets to 0 and the queue is never
+  // registered (no orphaned Zulip queue / long-poll). Cleared once create()
+  // installs the entry (or decides not to).
+  private readonly pendingDemand = new Map<string, number>();
 
   constructor(
     private readonly config: Config,
@@ -68,16 +76,19 @@ export class ZulipManager {
     }
     const pending = this.inflight.get(userId);
     if (pending) {
-      // Another connect is already creating the client. Wait for it, then bump
-      // the refcount for THIS caller too.
-      const client = await pending;
-      if (client) {
-        const entry = this.entries.get(userId);
-        if (entry) entry.refCount += 1;
-      }
-      return client;
+      // Another connect is already creating the client. Record THIS caller's
+      // demand synchronously (create() folds pendingDemand into the starting
+      // refCount), then wait for the create() to finish. If this socket
+      // disconnects before create() resolves, release() decrements the same
+      // counter, so the in-flight create() sees the correct net demand.
+      this.pendingDemand.set(userId, (this.pendingDemand.get(userId) ?? 0) + 1);
+      return await pending;
     }
 
+    // First connect for this user: seed demand at exactly 1 for this socket
+    // (overwriting any stale leftover), then create. Subsequent connects that
+    // race this create() add to this via the inflight branch above.
+    this.pendingDemand.set(userId, 1);
     const promise = this.create(userId);
     this.inflight.set(userId, promise);
     try {
@@ -89,14 +100,29 @@ export class ZulipManager {
 
   private async create(userId: string): Promise<ZulipQueueClient | null> {
     const link = await getZulipKey(userId);
-    if (!link) return null;
+    if (!link) {
+      this.pendingDemand.delete(userId);
+      return null;
+    }
 
     let apiKey: string;
     try {
       apiKey = decryptZulipKey(link.zulipApiKeyEnc);
     } catch {
       // Tampered or KEK rotated — treat as not linked; the user must re-link.
+      this.pendingDemand.delete(userId);
       this.fanout.onError(userId, "Your stored Zulip key could not be read. Please reconnect Zulip.");
+      return null;
+    }
+
+    // Net live socket demand accumulated while we awaited getZulipKey/decrypt.
+    // Sockets that connected contributed +1 (acquire), sockets that disconnected
+    // during the gap contributed -1 (release). If the net is <= 0 every socket
+    // that wanted this client has already gone away, so don't register a Zulip
+    // event queue / long-poll at all (that would orphan the queue forever).
+    const refCount = this.pendingDemand.get(userId) ?? 0;
+    this.pendingDemand.delete(userId);
+    if (refCount <= 0) {
       return null;
     }
 
@@ -107,7 +133,7 @@ export class ZulipManager {
     client.on("message", (payload) => this.fanout.onMessage(userId, payload));
     client.on("reaction", (payload) => this.fanout.onReaction(userId, payload));
 
-    const entry: ManagedEntry = { client, refCount: 1 };
+    const entry: ManagedEntry = { client, refCount };
     this.entries.set(userId, entry);
     void client.start();
     return client;
@@ -121,7 +147,17 @@ export class ZulipManager {
   /** Decrement the refcount; stop + drop the client when it reaches zero. */
   release(userId: string): void {
     const entry = this.entries.get(userId);
-    if (!entry) return;
+    if (!entry) {
+      // The client may still be in create()'s async gap (socket connected then
+      // disconnected before start()). Record the release against pendingDemand
+      // so create() nets it out and skips registering the queue. Only count it
+      // while a create() is actually in flight; a stray release with no inflight
+      // create and no entry has nothing to balance.
+      if (this.inflight.has(userId)) {
+        this.pendingDemand.set(userId, (this.pendingDemand.get(userId) ?? 0) - 1);
+      }
+      return;
+    }
     entry.refCount -= 1;
     if (entry.refCount <= 0) {
       entry.client.stop();
