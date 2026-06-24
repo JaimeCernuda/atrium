@@ -24,6 +24,7 @@ import DoorbellIcon from "@mui/icons-material/Doorbell";
 import LockIcon from "@mui/icons-material/Lock";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
 import PaletteIcon from "@mui/icons-material/Palette";
+import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutline";
 import { useNavigate } from "react-router-dom";
 import { can, useStore } from "../store";
 import { useState } from "react";
@@ -48,7 +49,17 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   const rooms = useStore((s) => s.rooms);
   const setZulipActiveChannel = useStore((s) => s.setZulipActiveChannel);
   const zulipChannels = useStore((s) => s.zulipChannels);
+  const zulipUsers = useStore((s) => s.zulipUsers);
   const navigate = useNavigate();
+
+  // A desk IS a person: category "Desks", bound to a student's project channel.
+  const isDesk = (room.category ?? "").toLowerCase() === "desks";
+  // The desk's owner identity, resolved from Zulip members by email, so an
+  // empty desk still shows whose it is (avatar + name).
+  const deskOwner =
+    isDesk && room.ownerEmail
+      ? zulipUsers.find((u) => u.email.toLowerCase() === room.ownerEmail!.toLowerCase())
+      : undefined;
 
   const zulipChannel =
     room.zulipStreamId != null
@@ -62,7 +73,10 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
     navigate("/zulip");
   };
 
-  const isOwner = !!me?.email && room.ownerEmail === me.email;
+  const isOwner =
+    !!me?.email &&
+    !!room.ownerEmail &&
+    room.ownerEmail.toLowerCase() === me.email.toLowerCase();
   const locked = !!room.locked;
   const canEnter = !locked || isOwner;
   const deco = room.decorations;
@@ -90,6 +104,22 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
   };
 
   const canKnock = users.length > 0 && !isCurrent && !room.disableMeeting;
+
+  const renameDesk = async () => {
+    const next = window.prompt("Rename your desk", room.name);
+    if (next == null) return;
+    const name = next.trim();
+    if (!name || name === room.name) return;
+    const res = await fetch(`/api/rooms/${room.id}/name`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) return;
+    const updated = (await res.json()) as Room;
+    setRooms(rooms.map((r) => (r.id === updated.id ? updated : r)));
+  };
 
   const toggleLock = async () => {
     const res = await fetch(`/api/rooms/${room.id}/lock`, {
@@ -150,15 +180,32 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
           </Typography>
         </Stack>
         <Stack direction="row" spacing={0}>
+          {isOwner && isDesk && (
+            <Tooltip title="Rename your desk">
+              <IconButton size="small" onClick={renameDesk}>
+                <DriveFileRenameOutlineIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
           {isOwner && (
-            <Tooltip title="Decorate your office">
+            <Tooltip title={isDesk ? "Decorate your desk" : "Decorate your office"}>
               <IconButton size="small" onClick={() => setDecorateOpen(true)}>
                 <PaletteIcon fontSize="small" />
               </IconButton>
             </Tooltip>
           )}
           {isOwner && (
-            <Tooltip title={locked ? "Unlock office" : "Lock office (only you can enter; others must knock)"}>
+            <Tooltip
+              title={
+                locked
+                  ? isDesk
+                    ? "Unlock desk"
+                    : "Unlock office"
+                  : isDesk
+                    ? "Lock desk (only you can enter; others must knock)"
+                    : "Lock office (only you can enter; others must knock)"
+              }
+            >
               <IconButton size="small" onClick={toggleLock} color={locked ? "warning" : "default"}>
                 {locked ? <LockIcon fontSize="small" /> : <LockOpenIcon fontSize="small" />}
               </IconButton>
@@ -249,7 +296,26 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
         }}
       >
         {users.length === 0 ? (
-          <Typography variant="caption" color="text.disabled">empty</Typography>
+          isDesk && (deskOwner || room.ownerEmail) ? (
+            <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+              <Avatar
+                src={deskOwner?.imageUrl}
+                alt={deskOwner?.name ?? room.ownerEmail}
+                sx={{ width: 24, height: 24, fontSize: 12, opacity: 0.85 }}
+              >
+                {(deskOwner?.name ?? room.ownerEmail ?? "?").charAt(0).toUpperCase()}
+              </Avatar>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {deskOwner?.name ?? room.ownerEmail}
+              </Typography>
+            </Stack>
+          ) : (
+            <Typography variant="caption" color="text.disabled">empty</Typography>
+          )
         ) : (
           <AvatarGroup
             max={5}

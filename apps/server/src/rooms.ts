@@ -37,6 +37,25 @@ function toApi(room: {
   };
 }
 
+// Normalize an incoming ownerEmail field. Returns:
+//  - { set: false } when absent (leave column unchanged)
+//  - { set: true, value: string | null } when provided (empty/null clears).
+// Emails are lowercased + trimmed so desk-owner comparisons stay case-insensitive.
+function normalizeOwnerEmail(v: unknown): { set: false } | { set: true; value: string | null } {
+  if (v === undefined) return { set: false };
+  if (v === null) return { set: true, value: null };
+  if (typeof v !== "string") return { set: true, value: null };
+  const s = v.trim().toLowerCase();
+  return { set: true, value: s.length > 0 ? s : null };
+}
+
+// Case-insensitive owner check: a desk/office owner is matched by email
+// regardless of how the address was cased when stored or signed in.
+function isOwnerEmail(roomOwner: string | null, userEmail: string | undefined): boolean {
+  if (!roomOwner || !userEmail) return false;
+  return roomOwner.trim().toLowerCase() === userEmail.trim().toLowerCase();
+}
+
 // Normalize an incoming zulipStreamId field. Returns:
 //  - { set: false } when the field is absent (leave column unchanged)
 //  - { set: true, value: number | null } when explicitly provided (null clears)
@@ -139,7 +158,7 @@ export async function isRoomEnterableBy(
     select: { locked: true, ownerEmail: true },
   });
   if (!room) return { ok: false, reason: "missing" };
-  if (room.locked && room.ownerEmail !== email) return { ok: false, reason: "locked" };
+  if (room.locked && !isOwnerEmail(room.ownerEmail, email)) return { ok: false, reason: "locked" };
   return { ok: true };
 }
 
@@ -159,6 +178,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     }
     const maxOrder = await prisma.room.aggregate({ _max: { sortOrder: true } });
     const stream = normalizeStreamId(body.zulipStreamId);
+    const owner = normalizeOwnerEmail(body.ownerEmail);
     try {
       const created = await prisma.room.create({
         data: {
@@ -168,6 +188,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
           category: body.category ?? null,
           disableMeeting: body.disableMeeting ?? false,
           externalMeetUrl: body.externalMeetUrl ?? null,
+          ...(owner.set ? { ownerEmail: owner.value } : {}),
           ...(stream.set ? { zulipStreamId: stream.value } : {}),
           sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
         },
@@ -186,6 +207,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
     const { id } = req.params;
     const body = req.body ?? {};
     const stream = normalizeStreamId(body.zulipStreamId);
+    const owner = normalizeOwnerEmail(body.ownerEmail);
     try {
       const updated = await prisma.room.update({
         where: { id },
@@ -195,6 +217,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
           ...(body.category !== undefined && { category: body.category ?? null }),
           ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
           ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
+          ...(owner.set ? { ownerEmail: owner.value } : {}),
           ...(stream.set ? { zulipStreamId: stream.value } : {}),
         },
       });
@@ -221,13 +244,37 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       if (!user) return reply;
       const room = await prisma.room.findUnique({ where: { id: req.params.id } });
       if (!room) return reply.code(404).send({ error: "room not found" });
-      const isOwner = room.ownerEmail === user.email;
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
       if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
         return reply.code(403).send({ error: "only the owner or an admin can lock this room" });
       }
       const updated = await prisma.room.update({
         where: { id: req.params.id },
         data: { locked: !!req.body?.locked },
+      });
+      return toApi(updated);
+    },
+  );
+
+  // Rename a room you own (a desk owner renames their own desk) or any room if
+  // you can manage rooms. Distinct from the admin PATCH so a desk owner who is
+  // not an admin still gets a rename path without the full manage_rooms gate.
+  app.patch<{ Params: { id: string }; Body: { name: string } }>(
+    "/api/rooms/:id/name",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
+        return reply.code(403).send({ error: "only the owner or an admin can rename this room" });
+      }
+      const name = String(req.body?.name ?? "").trim().slice(0, 100);
+      if (!name) return reply.code(400).send({ error: "name required" });
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { name },
       });
       return toApi(updated);
     },
@@ -277,7 +324,7 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       const room = await prisma.room.findUnique({ where: { id: req.params.id } });
       if (!room) return reply.code(404).send({ error: "room not found" });
       // Strictly owner-only — admins cannot overwrite someone else's personal office decorations
-      if (room.ownerEmail !== user.email) {
+      if (!isOwnerEmail(room.ownerEmail, user.email)) {
         return reply.code(403).send({ error: "only the room owner can decorate this room" });
       }
       const b = req.body ?? {};

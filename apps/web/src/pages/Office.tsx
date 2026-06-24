@@ -13,6 +13,7 @@ import { groupByZone, ZONES, type Zone } from "../layout";
 // Bottom row splits meetings (wider) from status (narrower).
 const DESKTOP_AREAS = `
   "entry    entry"
+  "desks    desks"
   "research research"
   "offices  offices"
   "meetings status"
@@ -23,6 +24,7 @@ const DESKTOP_COLUMNS = "2fr 1fr";
 // regardless of viewport width.
 const ZONE_COLUMNS: Record<string, { base: number; mobile: number }> = {
   entry: { base: 2, mobile: 2 },
+  desks: { base: 4, mobile: 2 },
   research: { base: 4, mobile: 2 },
   offices: { base: 5, mobile: 2 },
   meetings: { base: 4, mobile: 2 },

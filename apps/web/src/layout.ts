@@ -1,14 +1,21 @@
 import type { Room } from "@atrium/shared";
 
-export type Zone = "entry" | "research" | "offices" | "meetings" | "status" | "other";
+export type Zone = "entry" | "desks" | "research" | "offices" | "meetings" | "status" | "other";
 
 export interface ZoneDef {
   id: Zone;
   label: string;
 }
 
+// Reversible switch: when false, research-project rooms (category "Projects")
+// are superseded by the per-student Desks zone and fall through to "other"
+// (un-rendered on the floorplan, never deleted). Flip to true to restore the
+// old Projects zone instantly.
+const SHOW_PROJECTS = false;
+
 export const ZONES: ZoneDef[] = [
   { id: "entry", label: "Entry" },
+  { id: "desks", label: "Desks" },
   { id: "research", label: "Research" },
   { id: "offices", label: "Offices" },
   { id: "meetings", label: "Meeting rooms" },
@@ -27,10 +34,16 @@ export function zoneFor(room: Room): Zone {
   if (MEETING_NAMES.test(name)) return "meetings";
   if (STATUS_NAMES.test(name)) return "status";
 
+  if (cat === "desks") return "desks";
   if (cat === "offices") return "offices";
   if (cat === "academic") return "status";
   if (cat === "common") return "entry";
-  if (["papers", "projects", "engineering", "research"].includes(cat)) return "research";
+  // Projects are superseded by Desks unless explicitly re-enabled. When
+  // SHOW_PROJECTS is false, "projects" rooms fall through to "other".
+  const researchCats = SHOW_PROJECTS
+    ? ["papers", "projects", "engineering", "research"]
+    : ["papers", "engineering", "research"];
+  if (researchCats.includes(cat)) return "research";
 
   return "other";
 }
@@ -38,6 +51,7 @@ export function zoneFor(room: Room): Zone {
 export function groupByZone(rooms: Room[]): Record<Zone, Room[]> {
   const out: Record<Zone, Room[]> = {
     entry: [],
+    desks: [],
     research: [],
     offices: [],
     meetings: [],
