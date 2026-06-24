@@ -5,12 +5,6 @@ import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
 import { requirePermission, userHasPermission } from "./permissions.js";
 
-// Prisma raises P2002 on a unique-constraint violation (here: two rooms bound
-// to the same Zulip stream). We surface that as a 409 instead of a 500.
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
-}
-
 function toApi(room: {
   id: string;
   name: string;
@@ -22,7 +16,13 @@ function toApi(room: {
   locked: boolean;
   decorations?: unknown;
   zulipStreamId?: number | null;
+  zulipStreamIds?: number[];
 }): Room {
+  // Read-time union: the multi-channel array plus the legacy single column,
+  // de-duped and sorted. zulipStreamId stays as the first id for back-compat.
+  const ids = new Set<number>(room.zulipStreamIds ?? []);
+  if (room.zulipStreamId != null) ids.add(room.zulipStreamId);
+  const arr = Array.from(ids).sort((a, b) => a - b);
   return {
     id: room.id,
     name: room.name,
@@ -33,7 +33,8 @@ function toApi(room: {
     ownerEmail: room.ownerEmail ?? undefined,
     locked: room.locked,
     decorations: (room.decorations as OfficeDecoration | null) ?? undefined,
-    zulipStreamId: room.zulipStreamId ?? undefined,
+    zulipStreamId: arr.length > 0 ? arr[0] : undefined,
+    zulipStreamIds: arr,
   };
 }
 
@@ -65,6 +66,40 @@ function normalizeStreamId(v: unknown): { set: false } | { set: true; value: num
   const n = Number(v);
   if (!Number.isInteger(n) || n <= 0) return { set: true, value: null };
   return { set: true, value: n };
+}
+
+// Normalize an incoming zulipStreamIds array. Returns:
+//  - { set: false } when absent (leave bindings unchanged)
+//  - { set: true, value: number[] } when provided (null/[] clears all bindings)
+function normalizeStreamIds(v: unknown): { set: false } | { set: true; value: number[] } {
+  if (v === undefined) return { set: false };
+  if (v === null) return { set: true, value: [] };
+  if (!Array.isArray(v)) return { set: true, value: [] };
+  const ids = Array.from(
+    new Set(v.map(Number).filter((n) => Number.isInteger(n) && n > 0)),
+  ).sort((a, b) => a - b);
+  return { set: true, value: ids };
+}
+
+// Resolve the binding columns to write from an incoming body. The array is the
+// source of truth; the legacy single column is mirrored to the first id. Falls
+// back to the legacy single-field path for old clients that send only it.
+function streamWrite(body: {
+  zulipStreamIds?: unknown;
+  zulipStreamId?: unknown;
+}): { zulipStreamIds: number[]; zulipStreamId: number | null } | Record<string, never> {
+  const streams = normalizeStreamIds(body.zulipStreamIds);
+  if (streams.set) {
+    return { zulipStreamIds: streams.value, zulipStreamId: streams.value[0] ?? null };
+  }
+  const legacy = normalizeStreamId(body.zulipStreamId);
+  if (legacy.set) {
+    return {
+      zulipStreamId: legacy.value,
+      zulipStreamIds: legacy.value != null ? [legacy.value] : [],
+    };
+  }
+  return {};
 }
 
 const COLOR_TO_CATEGORY: Record<string, string> = {
@@ -177,57 +212,41 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       return reply.code(400).send({ error: "id and name required" });
     }
     const maxOrder = await prisma.room.aggregate({ _max: { sortOrder: true } });
-    const stream = normalizeStreamId(body.zulipStreamId);
     const owner = normalizeOwnerEmail(body.ownerEmail);
-    try {
-      const created = await prisma.room.create({
-        data: {
-          id: body.id,
-          name: body.name,
-          color: body.color ?? null,
-          category: body.category ?? null,
-          disableMeeting: body.disableMeeting ?? false,
-          externalMeetUrl: body.externalMeetUrl ?? null,
-          ...(owner.set ? { ownerEmail: owner.value } : {}),
-          ...(stream.set ? { zulipStreamId: stream.value } : {}),
-          sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
-        },
-      });
-      return toApi(created);
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        return reply.code(409).send({ error: "That Zulip channel is already bound to another room." });
-      }
-      throw err;
-    }
+    const created = await prisma.room.create({
+      data: {
+        id: body.id,
+        name: body.name,
+        color: body.color ?? null,
+        category: body.category ?? null,
+        disableMeeting: body.disableMeeting ?? false,
+        externalMeetUrl: body.externalMeetUrl ?? null,
+        ...(owner.set ? { ownerEmail: owner.value } : {}),
+        ...streamWrite(body),
+        sortOrder: (maxOrder._max.sortOrder ?? 0) + 1,
+      },
+    });
+    return toApi(created);
   });
 
   app.patch<{ Params: { id: string }; Body: Partial<Room> }>("/api/rooms/:id", async (req, reply) => {
     if (!(await requirePermission(req, reply, "manage_rooms", config.session.cookieName))) return reply;
     const { id } = req.params;
     const body = req.body ?? {};
-    const stream = normalizeStreamId(body.zulipStreamId);
     const owner = normalizeOwnerEmail(body.ownerEmail);
-    try {
-      const updated = await prisma.room.update({
-        where: { id },
-        data: {
-          ...(body.name !== undefined && { name: body.name }),
-          ...(body.color !== undefined && { color: body.color ?? null }),
-          ...(body.category !== undefined && { category: body.category ?? null }),
-          ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
-          ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
-          ...(owner.set ? { ownerEmail: owner.value } : {}),
-          ...(stream.set ? { zulipStreamId: stream.value } : {}),
-        },
-      });
-      return toApi(updated);
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        return reply.code(409).send({ error: "That Zulip channel is already bound to another room." });
-      }
-      throw err;
-    }
+    const updated = await prisma.room.update({
+      where: { id },
+      data: {
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.color !== undefined && { color: body.color ?? null }),
+        ...(body.category !== undefined && { category: body.category ?? null }),
+        ...(body.disableMeeting !== undefined && { disableMeeting: body.disableMeeting }),
+        ...(body.externalMeetUrl !== undefined && { externalMeetUrl: body.externalMeetUrl ?? null }),
+        ...(owner.set ? { ownerEmail: owner.value } : {}),
+        ...streamWrite(body),
+      },
+    });
+    return toApi(updated);
   });
 
   app.delete<{ Params: { id: string } }>("/api/rooms/:id", async (req, reply) => {
@@ -275,6 +294,32 @@ export async function registerRooms(app: FastifyInstance, config: Config): Promi
       const updated = await prisma.room.update({
         where: { id: req.params.id },
         data: { name },
+      });
+      return toApi(updated);
+    },
+  );
+
+  // Set the Zulip channels bound to a room/desk. Owner-or-admin, mirroring the
+  // rename gate: a desk owner may edit only their own desk (isOwnerEmail is
+  // false for any other room), while admins (manage_rooms) may edit any room.
+  app.patch<{ Params: { id: string }; Body: { zulipStreamIds?: number[] | null } }>(
+    "/api/rooms/:id/channels",
+    async (req, reply) => {
+      const user = await requireUser(req, reply, config.session.cookieName);
+      if (!user) return reply;
+      const room = await prisma.room.findUnique({ where: { id: req.params.id } });
+      if (!room) return reply.code(404).send({ error: "room not found" });
+      const isOwner = isOwnerEmail(room.ownerEmail, user.email);
+      if (!isOwner && !(await userHasPermission(user.id, "manage_rooms"))) {
+        return reply
+          .code(403)
+          .send({ error: "only the owner or an admin can set this room's channels" });
+      }
+      const streams = normalizeStreamIds(req.body?.zulipStreamIds);
+      const value = streams.set ? streams.value : [];
+      const updated = await prisma.room.update({
+        where: { id: req.params.id },
+        data: { zulipStreamIds: value, zulipStreamId: value[0] ?? null },
       });
       return toApi(updated);
     },

@@ -14,6 +14,7 @@ import { groupByZone, ZONES, type Zone } from "../layout";
 const DESKTOP_AREAS = `
   "entry    entry"
   "desks    desks"
+  "projects projects"
   "research research"
   "offices  offices"
   "meetings status"
@@ -25,6 +26,7 @@ const DESKTOP_COLUMNS = "2fr 1fr";
 const ZONE_COLUMNS: Record<string, { base: number; mobile: number }> = {
   entry: { base: 2, mobile: 2 },
   desks: { base: 4, mobile: 2 },
+  projects: { base: 4, mobile: 2 },
   research: { base: 4, mobile: 2 },
   offices: { base: 5, mobile: 2 },
   meetings: { base: 4, mobile: 2 },

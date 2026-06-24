@@ -1,6 +1,14 @@
 import type { Room } from "@atrium/shared";
 
-export type Zone = "entry" | "desks" | "research" | "offices" | "meetings" | "status" | "other";
+export type Zone =
+  | "entry"
+  | "desks"
+  | "projects"
+  | "research"
+  | "offices"
+  | "meetings"
+  | "status"
+  | "other";
 
 export interface ZoneDef {
   id: Zone;
@@ -16,6 +24,7 @@ const SHOW_PROJECTS = false;
 export const ZONES: ZoneDef[] = [
   { id: "entry", label: "Entry" },
   { id: "desks", label: "Desks" },
+  { id: "projects", label: "Projects" },
   { id: "research", label: "Research" },
   { id: "offices", label: "Offices" },
   { id: "meetings", label: "Meeting rooms" },
@@ -35,6 +44,11 @@ export function zoneFor(room: Room): Zone {
   if (STATUS_NAMES.test(name)) return "status";
 
   if (cat === "desks") return "desks";
+  // Broad shared rooms (Agentic, IOWarp, Jarvis, ChronoLog, Paper Reading) are
+  // category "Projects" with no owner — they render on their own Projects row,
+  // distinct from the per-student Desks. An owned Projects room (none seeded)
+  // falls through to the research handling below.
+  if (cat === "projects" && !room.ownerEmail) return "projects";
   if (cat === "offices") return "offices";
   if (cat === "academic") return "status";
   if (cat === "common") return "entry";
@@ -52,6 +66,7 @@ export function groupByZone(rooms: Room[]): Record<Zone, Room[]> {
   const out: Record<Zone, Room[]> = {
     entry: [],
     desks: [],
+    projects: [],
     research: [],
     offices: [],
     meetings: [],

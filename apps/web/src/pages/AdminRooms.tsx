@@ -3,6 +3,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   Container,
   Dialog,
   DialogActions,
@@ -25,7 +26,7 @@ import AddIcon from "@mui/icons-material/Add";
 import GroupAddIcon from "@mui/icons-material/GroupAdd";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
-import { MenuItem } from "@mui/material";
+import BuildIcon from "@mui/icons-material/Build";
 import type { Room, ZulipUser } from "@atrium/shared";
 import { useStore } from "../store";
 import { getSocket } from "../socket";
@@ -34,10 +35,40 @@ import { getSocket } from "../socket";
 const STUDENTS_GROUP_ID = 316940;
 const DESK_CATEGORY = "Desks";
 
+// Broad shared-discussion rooms — normal shared rooms (no owner) bound to a
+// matching Zulip channel, rendered on the Projects row.
+const SHARED_CATEGORY = "Projects";
+const SHARED_COLOR = "#388e3c";
+const SHARED_PROJECTS = ["Agentic", "IOWarp", "Jarvis", "ChronoLog", "Paper Reading"];
+
+// Per-student desk -> project channel(s). Jie Ye's single desk binds both DyTO
+// and Pythia (Pythia is folded into Jie's desk, not a standalone desk). Izzet's
+// desk has no channel bound.
+const STUDENT_DESK_BINDINGS: { studentName: string; channelNames: string[] }[] = [
+  { studentName: "Rajni Pawar", channelNames: ["Acropolis"] },
+  { studentName: "Neeraj Rajesh", channelNames: ["Aneris"] },
+  { studentName: "Hua Xu", channelNames: ["Coeus"] },
+  { studentName: "Keith Bateman", channelNames: ["DTIO"] },
+  { studentName: "Jie Ye", channelNames: ["DyTO", "Pythia"] },
+  { studentName: "Shazzadul Islam", channelNames: ["Fine-Tunning"] },
+  { studentName: "Isa Muradli", channelNames: ["GPUCompress"] },
+  { studentName: "Zia Uddin Chowdhury", channelNames: ["Lobotomy"] },
+  { studentName: "Meng Tang", channelNames: ["Widget"] },
+  { studentName: "Izzet Yildirim", channelNames: [] },
+];
+
 const isDeskRoom = (r: Room): boolean => (r.category ?? "").toLowerCase() === "desks";
 
 function emptyRoom(): Room {
-  return { id: "", name: "", color: "", category: "", disableMeeting: false, externalMeetUrl: "" };
+  return {
+    id: "",
+    name: "",
+    color: "",
+    category: "",
+    disableMeeting: false,
+    externalMeetUrl: "",
+    zulipStreamIds: [],
+  };
 }
 
 function emptyDesk(): Room {
@@ -49,6 +80,7 @@ function emptyDesk(): Room {
     ownerEmail: "",
     disableMeeting: false,
     externalMeetUrl: "",
+    zulipStreamIds: [],
   };
 }
 
@@ -73,6 +105,19 @@ export function AdminRooms() {
   const channelById = new Map(channels.map((c) => [c.id, c]));
   const userByEmail = new Map(zulipUsers.map((u) => [u.email.toLowerCase(), u]));
 
+  // Render every channel a room is bound to (multi-channel), falling back to the
+  // legacy single id for rooms not yet migrated.
+  const boundChannelsLabel = (r: Room): string => {
+    const ids = r.zulipStreamIds?.length
+      ? r.zulipStreamIds
+      : r.zulipStreamId != null
+        ? [r.zulipStreamId]
+        : [];
+    return ids.length
+      ? ids.map((id) => `#${channelById.get(id)?.name ?? id}`).join(", ")
+      : "—";
+  };
+
   const desks = rooms.filter(isDeskRoom);
   const nonDeskRooms = rooms.filter((r) => !isDeskRoom(r));
 
@@ -92,12 +137,12 @@ export function AdminRooms() {
     if (!editing) return;
     const method = isNew ? "POST" : "PATCH";
     const url = isNew ? "/api/rooms" : `/api/rooms/${editing.id}`;
-    // Send zulipStreamId + ownerEmail explicitly (null/empty clears them); the
+    // Send zulipStreamIds + ownerEmail explicitly (null/empty clears them); the
     // server treats an absent field as "leave unchanged", so always provide a
     // value. ownerEmail is lowercased for case-insensitive owner matching.
     const payload = {
       ...editing,
-      zulipStreamId: editing.zulipStreamId ?? null,
+      zulipStreamIds: editing.zulipStreamIds ?? null,
       ownerEmail: editing.ownerEmail ? editing.ownerEmail.trim().toLowerCase() : null,
     };
     const res = await fetch(url, {
@@ -107,11 +152,7 @@ export function AdminRooms() {
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      if (res.status === 409) {
-        alert("That Zulip channel is already bound to another room.");
-      } else {
-        alert(`Save failed: ${res.status}`);
-      }
+      alert(`Save failed: ${res.status}`);
       return;
     }
     setEditing(null);
@@ -182,6 +223,111 @@ export function AdminRooms() {
     refresh();
   };
 
+  // Idempotent lab setup: creates each student's desk bound to their project
+  // channel(s) and the broad shared rooms. De-dupes desks by owner email and
+  // shared rooms by lowercased name, so a re-run never duplicates or double-binds.
+  // Channels and students are matched case-insensitively by name; any unmatched
+  // name is skipped and reported rather than failing the whole run.
+  const setupLab = async () => {
+    setSeeding(true);
+    const channelByName = new Map(channels.map((c) => [c.name.toLowerCase(), c]));
+    const userByName = new Map(zulipUsers.map((u) => [u.name.toLowerCase(), u]));
+    const existingOwners = new Set(
+      rooms
+        .filter(isDeskRoom)
+        .map((r) => (r.ownerEmail ?? "").toLowerCase())
+        .filter(Boolean),
+    );
+    const existingShared = new Set(
+      rooms
+        .filter((r) => (r.category ?? "").toLowerCase() === "projects" && !r.ownerEmail)
+        .map((r) => r.name.toLowerCase()),
+    );
+    const res = {
+      deskCreated: 0,
+      deskSkipped: 0,
+      projCreated: 0,
+      projSkipped: 0,
+      failed: 0,
+      unmatched: [] as string[],
+    };
+
+    for (const b of STUDENT_DESK_BINDINGS) {
+      const u = userByName.get(b.studentName.toLowerCase());
+      if (!u) {
+        res.unmatched.push(`student "${b.studentName}"`);
+        continue;
+      }
+      const email = u.email.toLowerCase();
+      if (existingOwners.has(email)) {
+        res.deskSkipped++;
+        continue;
+      }
+      const ids: number[] = [];
+      for (const cn of b.channelNames) {
+        const ch = channelByName.get(cn.toLowerCase());
+        if (ch) ids.push(ch.id);
+        else res.unmatched.push(`channel "${cn}" (for ${b.studentName})`);
+      }
+      const r = await fetch("/api/rooms", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: randomId(),
+          name: u.name,
+          category: DESK_CATEGORY,
+          ownerEmail: email,
+          zulipStreamIds: ids,
+        }),
+      });
+      if (r.ok) {
+        res.deskCreated++;
+        existingOwners.add(email);
+      } else res.failed++;
+    }
+
+    for (const name of SHARED_PROJECTS) {
+      if (existingShared.has(name.toLowerCase())) {
+        res.projSkipped++;
+        continue;
+      }
+      const ch = channelByName.get(name.toLowerCase());
+      if (!ch && name !== "Paper Reading") res.unmatched.push(`project channel "${name}"`);
+      const r = await fetch("/api/rooms", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: randomId(),
+          name,
+          category: SHARED_CATEGORY,
+          color: SHARED_COLOR,
+          ownerEmail: null,
+          zulipStreamIds: ch ? [ch.id] : [],
+        }),
+      });
+      if (r.ok) {
+        res.projCreated++;
+        existingShared.add(name.toLowerCase());
+      } else res.failed++;
+    }
+
+    setSeeding(false);
+    const parts = [
+      `${res.deskCreated} desk(s) created`,
+      `${res.deskSkipped} skipped`,
+      `${res.projCreated} project room(s) created`,
+      `${res.projSkipped} skipped`,
+    ];
+    if (res.failed) parts.push(`${res.failed} failed`);
+    setSeedResult(
+      parts.join(", ") +
+        (res.unmatched.length ? `\n\nUnmatched: ${res.unmatched.join("; ")}` : ""),
+    );
+    refresh();
+  };
+
   return (
     <Container maxWidth="lg" sx={{ py: 3 }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
@@ -222,11 +368,7 @@ export function AdminRooms() {
                     />
                   )}
                 </TableCell>
-                <TableCell>
-                  {r.zulipStreamId != null
-                    ? `#${channelById.get(r.zulipStreamId)?.name ?? r.zulipStreamId}`
-                    : "—"}
-                </TableCell>
+                <TableCell>{boundChannelsLabel(r)}</TableCell>
                 <TableCell sx={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {r.externalMeetUrl ?? (r.disableMeeting ? "(no meeting)" : "—")}
                 </TableCell>
@@ -257,6 +399,14 @@ export function AdminRooms() {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1}>
+          <Button
+            variant="contained"
+            startIcon={<BuildIcon />}
+            onClick={setupLab}
+            disabled={seeding}
+          >
+            {seeding ? "Setting up…" : "Set up lab desks & projects"}
+          </Button>
           <Button
             variant="outlined"
             startIcon={<GroupAddIcon />}
@@ -306,11 +456,7 @@ export function AdminRooms() {
                   <TableCell>
                     {owner ? `${owner.name} <${owner.email}>` : (r.ownerEmail ?? "—")}
                   </TableCell>
-                  <TableCell>
-                    {r.zulipStreamId != null
-                      ? `#${channelById.get(r.zulipStreamId)?.name ?? r.zulipStreamId}`
-                      : "—"}
-                  </TableCell>
+                  <TableCell>{boundChannelsLabel(r)}</TableCell>
                   <TableCell align="right">
                     <IconButton size="small" onClick={() => { setEditing(r); setIsNew(false); }}>
                       <EditIcon fontSize="small" />
@@ -329,7 +475,7 @@ export function AdminRooms() {
       <Dialog open={!!seedResult} onClose={() => setSeedResult(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Desks seeded</DialogTitle>
         <DialogContent>
-          <Typography variant="body2">{seedResult}</Typography>
+          <Typography variant="body2" sx={{ whiteSpace: "pre-line" }}>{seedResult}</Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSeedResult(null)}>Done</Button>
@@ -407,26 +553,39 @@ export function AdminRooms() {
                 placeholder="#1976d2"
                 fullWidth
               />
-              <TextField
-                select
-                label="Zulip channel"
-                value={editing.zulipStreamId ?? ""}
-                onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    zulipStreamId: e.target.value === "" ? undefined : Number(e.target.value),
-                  })
-                }
-                helperText="Bind this room to a Zulip channel. Entering the room opens that channel's topics."
-                fullWidth
-              >
-                <MenuItem value="">(None)</MenuItem>
-                {channels.map((c) => (
-                  <MenuItem key={c.id} value={c.id}>
-                    #{c.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+              <Box>
+                <Typography variant="subtitle2">Bound channels</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Bind this room to one or more Zulip channels. Each gets its own jump chip.
+                </Typography>
+                <Stack spacing={0} sx={{ mt: 0.5, maxHeight: 220, overflowY: "auto" }}>
+                  {channels.map((c) => {
+                    const arr =
+                      editing.zulipStreamIds ??
+                      (editing.zulipStreamId != null ? [editing.zulipStreamId] : []);
+                    return (
+                      <FormControlLabel
+                        key={c.id}
+                        control={
+                          <Checkbox
+                            size="small"
+                            checked={arr.includes(c.id)}
+                            onChange={(e) =>
+                              setEditing({
+                                ...editing,
+                                zulipStreamIds: e.target.checked
+                                  ? [...arr, c.id]
+                                  : arr.filter((x) => x !== c.id),
+                              })
+                            }
+                          />
+                        }
+                        label={`# ${c.name}`}
+                      />
+                    );
+                  })}
+                </Stack>
+              </Box>
               <TextField
                 label="External meeting URL"
                 value={editing.externalMeetUrl ?? ""}

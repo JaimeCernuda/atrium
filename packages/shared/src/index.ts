@@ -42,6 +42,7 @@ export interface Room {
   locked?: boolean;
   decorations?: OfficeDecoration;
   zulipStreamId?: number;
+  zulipStreamIds?: number[];
 }
 
 /**

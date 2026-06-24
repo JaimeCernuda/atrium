@@ -3,8 +3,15 @@ import {
   AvatarGroup,
   Badge,
   Box,
+  Button,
   Card,
+  Checkbox,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  FormControlLabel,
   IconButton,
   Menu,
   MenuItem,
@@ -25,6 +32,7 @@ import LockIcon from "@mui/icons-material/Lock";
 import LockOpenIcon from "@mui/icons-material/LockOpen";
 import PaletteIcon from "@mui/icons-material/Palette";
 import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutline";
+import LinkIcon from "@mui/icons-material/Link";
 import { useNavigate } from "react-router-dom";
 import { can, useStore } from "../store";
 import { useState } from "react";
@@ -44,6 +52,8 @@ interface Props {
 export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Props) {
   const [menuState, setMenuState] = useState<{ anchor: HTMLElement; user: PresenceUser } | null>(null);
   const [decorateOpen, setDecorateOpen] = useState(false);
+  const [channelCfgOpen, setChannelCfgOpen] = useState(false);
+  const [selectedChannels, setSelectedChannels] = useState<number[]>([]);
   const me = useStore((s) => s.user);
   const setRooms = useStore((s) => s.setRooms);
   const rooms = useStore((s) => s.rooms);
@@ -61,22 +71,33 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
       ? zulipUsers.find((u) => u.email.toLowerCase() === room.ownerEmail!.toLowerCase())
       : undefined;
 
-  const zulipChannel =
-    room.zulipStreamId != null
-      ? zulipChannels.find((c) => c.id === room.zulipStreamId)
-      : undefined;
-
-  const openInZulip = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (room.zulipStreamId == null) return;
-    setZulipActiveChannel(room.zulipStreamId, null);
-    navigate("/zulip");
-  };
+  // The room's bound channels: the multi-channel array, falling back to the
+  // legacy single id for rooms not yet migrated to a binding list.
+  const boundChannelIds = room.zulipStreamIds?.length
+    ? room.zulipStreamIds
+    : room.zulipStreamId != null
+      ? [room.zulipStreamId]
+      : [];
+  const channelById = new Map(zulipChannels.map((c) => [c.id, c]));
 
   const isOwner =
     !!me?.email &&
     !!room.ownerEmail &&
     room.ownerEmail.toLowerCase() === me.email.toLowerCase();
+  const canManageRooms = can(me, "manage_rooms");
+
+  const saveChannels = async () => {
+    const res = await fetch(`/api/rooms/${room.id}/channels`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zulipStreamIds: selectedChannels }),
+    });
+    if (!res.ok) return;
+    const updated = (await res.json()) as Room;
+    setRooms(rooms.map((r) => (r.id === updated.id ? updated : r)));
+    setChannelCfgOpen(false);
+  };
   const locked = !!room.locked;
   const canEnter = !locked || isOwner;
   const deco = room.decorations;
@@ -187,6 +208,20 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
               </IconButton>
             </Tooltip>
           )}
+          {(isOwner || canManageRooms) && (
+            <Tooltip title="Configure channels">
+              <IconButton
+                size="small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedChannels(boundChannelIds);
+                  setChannelCfgOpen(true);
+                }}
+              >
+                <LinkIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
           {isOwner && (
             <Tooltip title={isDesk ? "Decorate your desk" : "Decorate your office"}>
               <IconButton size="small" onClick={() => setDecorateOpen(true)}>
@@ -241,20 +276,29 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
         </Stack>
       </Stack>
 
-      {/* This room is bound to a Zulip channel — offer a jump into it. */}
-      {room.zulipStreamId != null && (
-        <Box sx={{ mt: 0.5 }}>
-          <Tooltip title="Jump to this room's channel in the Zulip client">
-            <Chip
-              icon={<ForumIcon sx={{ fontSize: 14 }} />}
-              label={zulipChannel ? `# ${zulipChannel.name} in Zulip` : "Open in Zulip"}
-              size="small"
-              clickable
-              onClick={openInZulip}
-              sx={{ fontSize: 11, height: 22, maxWidth: "100%" }}
-            />
-          </Tooltip>
-        </Box>
+      {/* One chip per bound channel — a direct jump into each in the Zulip client. */}
+      {boundChannelIds.length > 0 && (
+        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+          {boundChannelIds.map((id) => {
+            const ch = channelById.get(id);
+            return (
+              <Tooltip key={id} title={`Open #${ch?.name ?? id}`}>
+                <Chip
+                  icon={<ForumIcon sx={{ fontSize: 14 }} />}
+                  label={`# ${ch?.name ?? id}`}
+                  size="small"
+                  clickable
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setZulipActiveChannel(id, null);
+                    navigate("/zulip");
+                  }}
+                  sx={{ fontSize: 11, height: 22, maxWidth: "100%" }}
+                />
+              </Tooltip>
+            );
+          })}
+        </Stack>
       )}
 
       {/* Motto line */}
@@ -419,6 +463,46 @@ export function RoomCard({ room, users, isCurrent, onEnterRoom, onDmUser }: Prop
     </Card>
     {isOwner && (
       <OfficeDecorateDialog room={room} open={decorateOpen} onClose={() => setDecorateOpen(false)} />
+    )}
+    {(isOwner || canManageRooms) && (
+      <Dialog open={channelCfgOpen} onClose={() => setChannelCfgOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Bound channels</DialogTitle>
+        <DialogContent>
+          {zulipChannels.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              No Zulip channels loaded yet. Open the chat once, then reopen this dialog.
+            </Typography>
+          ) : (
+            <Stack spacing={0.5} sx={{ mt: 1 }}>
+              {zulipChannels.map((ch) => (
+                <FormControlLabel
+                  key={ch.id}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={selectedChannels.includes(ch.id)}
+                      onChange={(e) =>
+                        setSelectedChannels(
+                          e.target.checked
+                            ? [...selectedChannels, ch.id]
+                            : selectedChannels.filter((x) => x !== ch.id),
+                        )
+                      }
+                    />
+                  }
+                  label={`# ${ch.name}`}
+                />
+              ))}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setChannelCfgOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={saveChannels}>
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     )}
     </>
   );
