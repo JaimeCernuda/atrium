@@ -295,8 +295,11 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
           return;
         }
       }
-      // Desk channel bindings persist first so the decorate response reflects them.
-      if (isDesk) {
+      // Channel bindings persist first so the decorate response reflects them.
+      // Available to any owned room (desks and offices), so an office owner can
+      // bind Zulip channels from the customize dialog too. The diff check skips a
+      // no-op PATCH when nothing changed.
+      {
         const a = [...channels].sort((x, y) => x - y);
         const b = [...boundInit].sort((x, y) => x - y);
         if (a.length !== b.length || a.some((v, i) => v !== b[i])) {
@@ -718,10 +721,9 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
           </AccordionDetails>
         </Accordion>
 
-        {/* ── Channels (desks only) ────────────────────────── */}
-        {isDesk && (
-          <Accordion disableGutters elevation={0}
-            sx={{ "&::before": { display: "none" }, borderTop: "1px solid", borderColor: "divider" }}>
+        {/* ── Channels (any owned room: desks + offices) ───── */}
+        <Accordion disableGutters elevation={0}
+          sx={{ "&::before": { display: "none" }, borderTop: "1px solid", borderColor: "divider" }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Stack direction="row" alignItems="center" spacing={1}>
                 <Typography variant="subtitle2">Channels</Typography>
@@ -730,7 +732,9 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
             </AccordionSummary>
             <AccordionDetails>
               <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-                Link the Zulip channels for the projects you work on. They appear as chips on your desk.
+                {isDesk
+                  ? "Link the Zulip channels for the projects you work on. They appear as chips on your desk."
+                  : "Link the Zulip channels this office hosts. They appear as chips on the office."}
               </Typography>
               <Stack sx={{ maxHeight: 260, overflowY: "auto" }}>
                 {zulipChannels.map((ch) => (
@@ -756,7 +760,6 @@ export function OfficeDecorateDialog({ room, open, onClose }: Props) {
               </Stack>
             </AccordionDetails>
           </Accordion>
-        )}
       </DialogContent>
 
       <DialogActions sx={{ px: 3, py: 2, borderTop: "1px solid", borderColor: "divider" }}>

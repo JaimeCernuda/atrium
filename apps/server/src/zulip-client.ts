@@ -634,6 +634,10 @@ export class ZulipQueueClient extends EventEmitter {
   private async register(): Promise<void> {
     const body = new URLSearchParams({
       event_types: JSON.stringify(EVENT_TYPES),
+      // Deliver live message events as server-rendered HTML, not raw markdown, so
+      // a sent image/quote-reply renders on the echo without a reload (the
+      // history fetches already pass apply_markdown=true).
+      apply_markdown: "true",
       // Also pull the current unread state so the client can seed trustworthy
       // unread counts that survive reload + converge across devices.
       fetch_event_types: JSON.stringify(["unread_msgs"]),

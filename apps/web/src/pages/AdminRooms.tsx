@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
   Checkbox,
+  Chip,
   Container,
   Dialog,
   DialogActions,
@@ -11,7 +13,11 @@ import {
   DialogTitle,
   FormControlLabel,
   IconButton,
+  ListItemText,
+  MenuItem,
+  OutlinedInput,
   Paper,
+  Select,
   Stack,
   Switch,
   Table,
@@ -20,6 +26,7 @@ import {
   TableHead,
   TableRow,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
@@ -141,27 +148,120 @@ export function AdminRooms() {
   const [isNew, setIsNew] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showSuperseded, setShowSuperseded] = useState(false);
+  // Per-row meeting-URL draft while typing; committed on blur/Enter.
+  const [meetDraft, setMeetDraft] = useState<Record<string, string>>({});
   const channels = useStore((s) => s.zulipChannels);
   const zulipUsers = useStore((s) => s.zulipUsers);
   const zulipUserGroups = useStore((s) => s.zulipUserGroups);
   const channelById = new Map(channels.map((c) => [c.id, c]));
   const userByEmail = new Map(zulipUsers.map((u) => [u.email.toLowerCase(), u]));
 
-  // Render every channel a room is bound to (multi-channel), falling back to the
-  // legacy single id for rooms not yet migrated.
-  const boundChannelsLabel = (r: Room): string => {
-    const ids = r.zulipStreamIds?.length
+  // The ids a room is bound to (multi-channel), falling back to the legacy single
+  // id for rooms not yet migrated.
+  const boundIds = (r: Room): number[] =>
+    r.zulipStreamIds?.length
       ? r.zulipStreamIds
       : r.zulipStreamId != null
         ? [r.zulipStreamId]
         : [];
-    return ids.length
-      ? ids.map((id) => `#${channelById.get(id)?.name ?? id}`).join(", ")
-      : "—";
+
+  // Patch one field of a room in place via the admin endpoint, then reflect the
+  // server's row back into state (no full refetch, so the row doesn't flicker).
+  const patchRoom = async (
+    id: string,
+    patch: Omit<Partial<Room>, "externalMeetUrl" | "zulipStreamIds"> & {
+      externalMeetUrl?: string | null;
+      zulipStreamIds?: number[] | null;
+    },
+  ) => {
+    try {
+      const res = await fetch(`/api/rooms/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const updated = (await res.json()) as Room;
+      setRooms((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  // In-row Zulip-channel multi-select: chips for the bound channels + a dropdown
+  // to toggle membership. Writes through patchRoom so it persists immediately.
+  const ChannelSelect = ({ room }: { room: Room }) => {
+    const value = boundIds(room);
+    return (
+      <Select<number[]>
+        multiple
+        size="small"
+        displayEmpty
+        value={value}
+        input={<OutlinedInput />}
+        onChange={(e) => {
+          const next = e.target.value as number[];
+          patchRoom(room.id, { zulipStreamIds: next });
+        }}
+        renderValue={(sel) =>
+          sel.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              none
+            </Typography>
+          ) : (
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+              {sel.map((id) => (
+                <Chip key={id} size="small" label={`#${channelById.get(id)?.name ?? id}`} />
+              ))}
+            </Box>
+          )
+        }
+        sx={{ minWidth: 200, maxWidth: 320, fontSize: "0.875rem" }}
+      >
+        {channels.map((c) => (
+          <MenuItem key={c.id} value={c.id}>
+            <Checkbox size="small" checked={value.includes(c.id)} />
+            <ListItemText primary={`# ${c.name}`} />
+          </MenuItem>
+        ))}
+      </Select>
+    );
+  };
+
+  // In-row meeting-URL editor: a small text field committed on blur/Enter.
+  const MeetUrlField = ({ room }: { room: Room }) => {
+    const draft = meetDraft[room.id] ?? room.externalMeetUrl ?? "";
+    const commit = () => {
+      const trimmed = draft.trim();
+      if (trimmed === (room.externalMeetUrl ?? "")) return;
+      patchRoom(room.id, { externalMeetUrl: trimmed || null });
+    };
+    return (
+      <TextField
+        size="small"
+        variant="standard"
+        placeholder={room.disableMeeting ? "(no meeting)" : "meeting URL"}
+        value={draft}
+        onChange={(e) => setMeetDraft((d) => ({ ...d, [room.id]: e.target.value }))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        sx={{ minWidth: 200, maxWidth: 280 }}
+      />
+    );
   };
 
   const desks = rooms.filter(isDeskRoom);
   const nonDeskRooms = rooms.filter((r) => !isDeskRoom(r));
+  // Live (non-superseded) vs superseded "Papers" rooms. Superseded rooms are the
+  // old research rooms folded into per-student desks; they read as live
+  // blank-channel rooms otherwise, so segregate them behind a toggle.
+  const liveRooms = nonDeskRooms.filter((r) => !r.superseded);
+  const supersededRooms = nonDeskRooms.filter((r) => r.superseded);
 
   const refresh = () => {
     fetchRooms().then(setRooms).catch(console.error);
@@ -454,6 +554,18 @@ export function AdminRooms() {
         </Button>
       </Stack>
 
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
+
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        Bind Zulip channels and set the meeting URL right in the row. Desks below
+        are the source of truth for per-student channels. Superseded research
+        rooms are hidden so they don't read as live blank-channel rooms.
+      </Typography>
+
       <Paper>
         <Table size="small">
           <TableHead>
@@ -461,13 +573,13 @@ export function AdminRooms() {
               <TableCell>Name</TableCell>
               <TableCell>Category</TableCell>
               <TableCell>Color</TableCell>
-              <TableCell>Zulip channel</TableCell>
+              <TableCell>Zulip channels</TableCell>
               <TableCell>Meeting URL</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {nonDeskRooms.map((r) => (
+            {liveRooms.map((r) => (
               <TableRow key={r.id}>
                 <TableCell>{r.name}</TableCell>
                 <TableCell>{r.category ?? "—"}</TableCell>
@@ -478,14 +590,18 @@ export function AdminRooms() {
                     />
                   )}
                 </TableCell>
-                <TableCell>{boundChannelsLabel(r)}</TableCell>
-                <TableCell sx={{ maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.externalMeetUrl ?? (r.disableMeeting ? "(no meeting)" : "—")}
+                <TableCell>
+                  <ChannelSelect room={r} />
+                </TableCell>
+                <TableCell>
+                  <MeetUrlField room={r} />
                 </TableCell>
                 <TableCell align="right">
-                  <IconButton size="small" onClick={() => { setEditing(r); setIsNew(false); }}>
-                    <EditIcon fontSize="small" />
-                  </IconButton>
+                  <Tooltip title="More options (rename, owner, color)">
+                    <IconButton size="small" onClick={() => { setEditing(r); setIsNew(false); }}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                   <IconButton size="small" onClick={() => remove(r.id)}>
                     <DeleteIcon fontSize="small" />
                   </IconButton>
@@ -495,6 +611,65 @@ export function AdminRooms() {
           </TableBody>
         </Table>
       </Paper>
+
+      {supersededRooms.length > 0 && (
+        <Box sx={{ mt: 2 }}>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+            <Typography variant="subtitle2" color="text.secondary">
+              Superseded research rooms ({supersededRooms.length})
+            </Typography>
+            <Button size="small" onClick={() => setShowSuperseded((v) => !v)}>
+              {showSuperseded ? "Hide" : "Show"}
+            </Button>
+          </Stack>
+          {showSuperseded && (
+            <Paper variant="outlined" sx={{ opacity: 0.75 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Name</TableCell>
+                    <TableCell>Category</TableCell>
+                    <TableCell>Folded into desk</TableCell>
+                    <TableCell align="right">Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {supersededRooms.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell>
+                        {r.name}
+                        <Chip
+                          size="small"
+                          label="superseded"
+                          variant="outlined"
+                          sx={{ ml: 1, height: 18, fontSize: 11 }}
+                        />
+                      </TableCell>
+                      <TableCell>{r.category ?? "—"}</TableCell>
+                      <TableCell sx={{ color: "text.secondary" }}>
+                        a per-student desk (see below)
+                      </TableCell>
+                      <TableCell align="right">
+                        <Tooltip title="Restore (un-supersede)">
+                          <Button
+                            size="small"
+                            onClick={() => patchRoom(r.id, { superseded: false })}
+                          >
+                            Restore
+                          </Button>
+                        </Tooltip>
+                        <IconButton size="small" onClick={() => remove(r.id)}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Paper>
+          )}
+        </Box>
+      )}
 
       <Stack
         direction="row"
@@ -566,11 +741,15 @@ export function AdminRooms() {
                   <TableCell>
                     {owner ? `${owner.name} <${owner.email}>` : (r.ownerEmail ?? "—")}
                   </TableCell>
-                  <TableCell>{boundChannelsLabel(r)}</TableCell>
+                  <TableCell>
+                    <ChannelSelect room={r} />
+                  </TableCell>
                   <TableCell align="right">
-                    <IconButton size="small" onClick={() => { setEditing(r); setIsNew(false); }}>
-                      <EditIcon fontSize="small" />
-                    </IconButton>
+                    <Tooltip title="More options (rename, owner)">
+                      <IconButton size="small" onClick={() => { setEditing(r); setIsNew(false); }}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                     <IconButton size="small" onClick={() => remove(r.id)}>
                       <DeleteIcon fontSize="small" />
                     </IconButton>

@@ -233,7 +233,16 @@ export const useStore = create<AtriumState>((set, get) => ({
   setGlobalMessages: (globalMessages) => set({ globalMessages }),
   appendGlobalMessage: (msg) =>
     set((state) => {
-      if (state.globalMessages.some((m) => m.id === msg.id)) return state;
+      // A message with this id already exists (e.g. an optimistic placeholder
+      // whose body is the raw markdown the user typed). The incoming echo carries
+      // the server-rendered HTML body, so it wins: replace in place instead of
+      // ignoring, otherwise the raw markdown sticks until a reload.
+      const idx = state.globalMessages.findIndex((m) => m.id === msg.id);
+      if (idx !== -1) {
+        const next = state.globalMessages.slice();
+        next[idx] = msg;
+        return { globalMessages: next };
+      }
       return { globalMessages: [...state.globalMessages, msg].slice(-LIMIT) };
     }),
 
@@ -294,12 +303,15 @@ export const useStore = create<AtriumState>((set, get) => ({
     set((state) => {
       const key = `${channelId}:${topicName}`;
       const prev = state.zulipMessagesByTopic[key] ?? [];
-      if (prev.some((m) => m.id === msg.id)) return state;
+      // Server-rendered echo wins over any existing entry of the same id (see
+      // appendGlobalMessage): replace in place rather than ignore the duplicate.
+      const idx = prev.findIndex((m) => m.id === msg.id);
+      const next =
+        idx !== -1
+          ? prev.map((m, i) => (i === idx ? msg : m))
+          : [...prev, msg].slice(-LIMIT);
       return {
-        zulipMessagesByTopic: {
-          ...state.zulipMessagesByTopic,
-          [key]: [...prev, msg].slice(-LIMIT),
-        },
+        zulipMessagesByTopic: { ...state.zulipMessagesByTopic, [key]: next },
       };
     }),
 
@@ -321,12 +333,19 @@ export const useStore = create<AtriumState>((set, get) => ({
   appendZulipDmMessage: (key, msg) =>
     set((state) => {
       const prev = state.zulipDmsByParticipants[key] ?? [];
-      if (prev.some((m) => m.id === msg.id)) return state;
+      // The optimistic placeholder appended on send carries the RAW markdown the
+      // user typed (e.g. an `![image](/user_uploads/...)` upload or a quote-reply).
+      // reconcileZulipDmMessageId has already renamed that placeholder to the real
+      // Zulip id, so this rendered-HTML echo arrives with a matching id. Replace
+      // the placeholder in place so the server-rendered body wins; otherwise the
+      // raw markdown sticks until a reload.
+      const idx = prev.findIndex((m) => m.id === msg.id);
+      const next =
+        idx !== -1
+          ? prev.map((m, i) => (i === idx ? msg : m))
+          : [...prev, msg].slice(-LIMIT);
       return {
-        zulipDmsByParticipants: {
-          ...state.zulipDmsByParticipants,
-          [key]: [...prev, msg].slice(-LIMIT),
-        },
+        zulipDmsByParticipants: { ...state.zulipDmsByParticipants, [key]: next },
       };
     }),
   reconcileZulipDmMessageId: (key, fromId, toId) =>

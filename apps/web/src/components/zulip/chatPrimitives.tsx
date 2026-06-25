@@ -30,6 +30,7 @@ import CodeIcon from "@mui/icons-material/Code";
 import DataObjectIcon from "@mui/icons-material/DataObject";
 import ReplyIcon from "@mui/icons-material/Reply";
 import DOMPurify from "dompurify";
+import { useNavigate } from "react-router-dom";
 import { getSocket } from "../../socket";
 import type { ChatMessage, ZulipChannel, ZulipUser, ZulipUserGroup } from "@atrium/shared";
 import { useStore } from "../../store";
@@ -130,6 +131,117 @@ export function channelNarrowUrl(channelId: number, topicName: string): string {
 /** DM narrow URL for the OTHER participant ids (`#narrow/dm/<id1,id2,…>`). */
 export function dmNarrowUrl(otherIds: number[]): string {
   return `${QUOTE_REALM}/#narrow/dm/${otherIds.join(",")}`;
+}
+
+// Inverse of encodeHashComponent: Zulip hides percent-escapes behind '.', so a
+// hash segment like "v1.2E0" decodes to "v1.0" only after we turn '.' back into
+// '%' and URI-decode. Falls back to the raw segment if decoding throws.
+function decodeHashComponent(str: string): string {
+  try {
+    return decodeURIComponent(str.replace(/\./g, "%"));
+  } catch {
+    return str;
+  }
+}
+
+// A parsed Zulip narrow that we can open inside Atrium instead of in Zulip web.
+export type ZulipNarrowTarget =
+  | { kind: "stream"; channelId: number; topic: string | null; nearId: number | null }
+  | { kind: "dm"; otherIds: number[]; nearId: number | null };
+
+/**
+ * Parse a grc.zulipchat.com narrow URL (`/#narrow/stream/<id>/topic/<t>[/near/<id>]`
+ * or `/#narrow/dm/<id1,id2,…>[/near/<id>]`) into a jump target. Returns null for
+ * any link that isn't a Zulip narrow we know how to open inside Atrium, so all
+ * other links keep their normal new-tab behaviour. Tolerates the legacy `pm-with`
+ * and `stream`-id-with-name (`12-general`) forms Zulip still emits.
+ */
+export function parseZulipNarrow(href: string): ZulipNarrowTarget | null {
+  let url: URL;
+  try {
+    url = new URL(href, QUOTE_REALM);
+  } catch {
+    return null;
+  }
+  if (url.hostname !== "grc.zulipchat.com") return null;
+  const hash = url.hash; // e.g. "#narrow/stream/12-general/topic/hi/near/345"
+  if (!hash.startsWith("#narrow/")) return null;
+  const parts = hash.slice("#narrow/".length).split("/");
+
+  // Pull operator/operand pairs into a small map, keeping the first of each.
+  const ops: Record<string, string> = {};
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const op = parts[i]!;
+    if (!(op in ops)) ops[op] = parts[i + 1]!;
+  }
+  const nearRaw = ops["near"];
+  const nearId = nearRaw != null && /^\d+$/.test(nearRaw) ? Number(nearRaw) : null;
+
+  const streamRaw = ops["stream"] ?? ops["channel"];
+  if (streamRaw != null) {
+    // Stream operand is "<id>" or "<id>-<slug>"; the leading integer is the id.
+    const channelId = Number(streamRaw.split("-")[0]);
+    if (!Number.isFinite(channelId)) return null;
+    const topicRaw = ops["topic"];
+    const topic = topicRaw != null ? decodeHashComponent(topicRaw) : null;
+    return { kind: "stream", channelId, topic, nearId };
+  }
+
+  const dmRaw = ops["dm"] ?? ops["pm-with"];
+  if (dmRaw != null) {
+    const otherIds = decodeHashComponent(dmRaw)
+      .split(",")
+      .map((s) => Number(s.split("-")[0]))
+      .filter((n) => Number.isFinite(n));
+    if (otherIds.length === 0) return null;
+    return { kind: "dm", otherIds, nearId };
+  }
+  return null;
+}
+
+/**
+ * Open a parsed Zulip narrow inside Atrium (no Zulip-web round trip). Channels
+ * open on the full /zulip surface; DMs open in the right-drawer DM tab. When the
+ * target message (`nearId`) is already loaded in that thread its bubble gets a
+ * brief highlight; otherwise we just open the thread (the message may be older
+ * than the loaded window). `navigate` is react-router's navigate.
+ */
+export function jumpToZulipNarrow(
+  target: ZulipNarrowTarget,
+  navigate: (path: string) => void,
+): void {
+  const store = useStore.getState();
+  if (target.kind === "stream") {
+    store.setZulipActiveChannel(target.channelId, target.topic);
+    navigate("/zulip");
+  } else {
+    const selfId = store.zulipSelfId;
+    const ids = selfId != null ? [selfId, ...target.otherIds] : target.otherIds;
+    store.setZulipActiveDmParticipants(ids);
+    store.setChatOpen(true);
+    store.setChatView("zulip-dm");
+  }
+  if (target.nearId != null) highlightMessageSoon(String(target.nearId));
+}
+
+// Briefly outline the target message bubble once it's in the DOM (it may need a
+// tick to mount after the thread opens). Best-effort: if the message isn't in the
+// loaded window there's nothing to highlight, and we simply leave the thread open.
+function highlightMessageSoon(messageId: string): void {
+  let tries = 0;
+  const tick = () => {
+    const el = document.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(messageId)}"]`,
+    );
+    if (el) {
+      el.scrollIntoView({ block: "center" });
+      el.classList.add("zulip-jump-highlight");
+      window.setTimeout(() => el.classList.remove("zulip-jump-highlight"), 2000);
+      return;
+    }
+    if (tries++ < 20) window.setTimeout(tick, 100);
+  };
+  window.setTimeout(tick, 50);
 }
 
 /**
@@ -243,6 +355,21 @@ export function MessageList({
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
 
+  const navigate = useNavigate();
+
+  // Intercept clicks on Zulip-narrow links (quote-reply "said" links, mentions
+  // of a conversation, etc.) and jump WITHIN Atrium instead of bouncing to the
+  // Zulip web app. Any non-narrow link falls through to its normal new-tab open.
+  const onBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (e.target as HTMLElement).closest("a");
+    const href = anchor?.getAttribute("href");
+    if (!href) return;
+    const target = parseZulipNarrow(href);
+    if (!target) return;
+    e.preventDefault();
+    jumpToZulipNarrow(target, navigate);
+  };
+
   const runs = groupConsecutiveMessages(messages, meId);
 
   return (
@@ -285,9 +412,14 @@ export function MessageList({
                 return (
                   <Box
                     key={m.id}
+                    data-message-id={m.id}
                     sx={{
                       position: "relative",
                       bgcolor: run.isOwn ? "primary.main" : "action.hover",
+                      transition: "box-shadow 0.2s, background-color 0.2s",
+                      "&.zulip-jump-highlight": {
+                        boxShadow: (t) => `0 0 0 2px ${t.palette.warning.main}`,
+                      },
                       color: run.isOwn ? "primary.contrastText" : "text.primary",
                       px: 1.5,
                       py: 0.75,
@@ -330,6 +462,7 @@ export function MessageList({
                     {rendered ? (
                       <Box
                         component="div"
+                        onClick={onBodyClick}
                         dangerouslySetInnerHTML={{ __html: rendered.html }}
                         sx={{
                           fontSize: "0.875rem",
