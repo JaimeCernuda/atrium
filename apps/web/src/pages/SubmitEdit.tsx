@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   Alert,
+  AlertTitle,
+  Box,
   Button,
   Chip,
   Container,
@@ -15,9 +17,11 @@ import {
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import { useNavigate, useParams } from "react-router-dom";
 import type { Submission, SubmissionResource } from "@atrium/shared";
+import ArticleIcon from "@mui/icons-material/Article";
 import { AppShell } from "../components/AppShell";
 import { FileDrop } from "../components/FileDrop";
-import { ResourcePicker } from "../components/ResourcePicker";
+import { AcknowledgmentsDialog } from "../components/AcknowledgmentsDialog";
+import { RESOURCE_INFO } from "../resources";
 import {
   CAMERA_READY_FILES,
   PAPER_EDIT_FILES,
@@ -39,6 +43,7 @@ export function SubmitEdit() {
   const [files, setFiles] = useState<Record<string, File | null>>({});
   const [resources, setResources] = useState<SubmissionResource[]>([]);
   const [cameraReady, setCameraReady] = useState(false);
+  const [ackOpen, setAckOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -207,7 +212,48 @@ export function SubmitEdit() {
                 helperText="Should match the DOI inside your updated .bib and .txt citations."
               />
 
-              <ResourcePicker selected={resources} onChange={setResources} />
+              {/*
+                The paper is already published here, so the acknowledgment can no
+                longer be changed — the computing-resource picker is intentionally
+                gone. We show the required acknowledgment (read-only) for the
+                resources recorded at submission, plus the generated LaTeX for
+                verification. The recorded resources are preserved on save.
+              */}
+              <Divider textAlign="left">
+                <Typography variant="caption" color="text.secondary">
+                  Acknowledgment
+                </Typography>
+              </Divider>
+              {resources.length > 0 ? (
+                <Alert severity="warning">
+                  <AlertTitle>Acknowledgment is locked — the paper is published</AlertTitle>
+                  Confirm the published paper credited the computing resources you used (recorded at
+                  submission — no longer editable here):
+                  <Stack spacing={1} sx={{ mt: 1 }}>
+                    {resources.map((r) => (
+                      <Box key={r}>
+                        <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                          {r}
+                        </Typography>
+                        <Typography variant="body2">{RESOURCE_INFO[r].ack}</Typography>
+                      </Box>
+                    ))}
+                  </Stack>
+                </Alert>
+              ) : (
+                <Alert severity="info">
+                  No computing resources were recorded for this submission. If the work used any,
+                  the acknowledgment can no longer be changed once published.
+                </Alert>
+              )}
+              <Button
+                variant="outlined"
+                startIcon={<ArticleIcon />}
+                onClick={() => setAckOpen(true)}
+                sx={{ alignSelf: "flex-start" }}
+              >
+                View / generate acknowledgment
+              </Button>
 
               <Divider textAlign="left">
                 <Typography variant="caption" color="text.secondary">
@@ -267,6 +313,13 @@ export function SubmitEdit() {
             </Stack>
           </>
         )}
+
+        <AcknowledgmentsDialog
+          open={ackOpen}
+          onClose={() => setAckOpen(false)}
+          funding={submission?.funding ?? ""}
+          resources={resources}
+        />
       </Container>
     </AppShell>
   );
