@@ -18,7 +18,12 @@ import type { Submission, SubmissionResource } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
 import { FileDrop } from "../components/FileDrop";
 import { ResourcePicker } from "../components/ResourcePicker";
-import { CAMERA_READY_FILES, PAPER_EDIT_FILES } from "../submission-slots";
+import {
+  CAMERA_READY_FILES,
+  PAPER_EDIT_FILES,
+  PAPER_NEW_FILES,
+  POSTER_FILES,
+} from "../submission-slots";
 
 /**
  * Post-conference edit for one of your own paper submissions.
@@ -45,8 +50,10 @@ export function SubmitEdit() {
     fetch("/api/submissions/mine", { credentials: "include" })
       .then((r) => (r.ok ? r.json() : { items: [] }))
       .then((d: { items: Submission[] }) => {
-        const found = d.items.find((s) => s.id === id && s.kind === "paper");
-        if (!found) {
+        const found = d.items.find((s) => s.id === id);
+        // Only papers can go through the post-conference flow; a pre-release
+        // ("announced") submission of either kind can be completed here.
+        if (!found || (found.kind !== "paper" && found.stage !== "announced")) {
           setNotFound(true);
           return;
         }
@@ -61,14 +68,29 @@ export function SubmitEdit() {
       .catch(() => setNotFound(true));
   }, [id]);
 
-  const slots = cameraReady ? [...PAPER_EDIT_FILES, ...CAMERA_READY_FILES] : PAPER_EDIT_FILES;
+  // Two shapes:
+  //  - announced (pre-release): attach the now-published files for the first
+  //    time. Full file set for the kind; every file optional; DOI optional.
+  //  - paper post-conference: updated citations (+DOI) and slides, as before.
+  const announced = submission?.stage === "announced";
+  const baseSlots = announced
+    ? submission?.kind === "poster"
+      ? POSTER_FILES
+      : PAPER_NEW_FILES
+    : PAPER_EDIT_FILES;
+  const slots = !announced && cameraReady ? [...PAPER_EDIT_FILES, ...CAMERA_READY_FILES] : baseSlots;
 
   const submit = async () => {
     if (!submission) return;
     setError(null);
 
+    if (!announced && !(fields.doi ?? "").trim()) {
+      setError("DOI is required for a published update.");
+      return;
+    }
+
     const fd = new FormData();
-    fd.append("kind", "paper");
+    fd.append("kind", submission.kind);
     fd.append("original_citation_key", submission.citationKey);
     fd.append("final_citation_key", fields.final_citation_key ?? "");
     fd.append("doi", fields.doi ?? "");
@@ -78,7 +100,8 @@ export function SubmitEdit() {
     for (const slot of slots) {
       const f = files[slot.role];
       if (f) fd.append(slot.role, f, f.name);
-      else if (slot.required) {
+      // Pre-release completion attaches whatever's ready — nothing is required.
+      else if (slot.required && !announced) {
         setError(`Missing required file: ${slot.label}`);
         return;
       }
@@ -130,7 +153,7 @@ export function SubmitEdit() {
         {submission && (
           <>
             <Typography variant="h5" sx={{ fontWeight: 600, mb: 0.5 }}>
-              Post-conference update
+              {announced ? "Add published files" : "Post-conference update"}
             </Typography>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
               <Typography sx={{ fontFamily: "monospace", fontWeight: 600 }}>
@@ -152,8 +175,9 @@ export function SubmitEdit() {
 
             <Stack spacing={2}>
               <Alert severity="info">
-                Brings the archived record up to the published version: final citation key, DOI,
-                updated citations, and your presentation slides.
+                {announced
+                  ? "The paper is published — attach the camera-ready files now. The public-website entry updates automatically once they're delivered."
+                  : "Brings the archived record up to the published version: final citation key, DOI, updated citations, and your presentation slides."}
               </Alert>
 
               <TextField
@@ -164,8 +188,8 @@ export function SubmitEdit() {
                 helperText="From the published .bib. Keep as-is if it didn't change — archived files are renamed automatically if it did."
               />
               <TextField
-                label="DOI"
-                required
+                label={announced ? "DOI (optional)" : "DOI"}
+                required={!announced}
                 value={fields.doi ?? ""}
                 onChange={set("doi")}
                 placeholder="10.1145/3673038.3673150"
@@ -176,10 +200,10 @@ export function SubmitEdit() {
 
               <Divider textAlign="left">
                 <Typography variant="caption" color="text.secondary">
-                  Updated files
+                  {announced ? "Published files" : "Updated files"}
                 </Typography>
               </Divider>
-              {PAPER_EDIT_FILES.map((slot) => (
+              {baseSlots.map((slot) => (
                 <FileDrop
                   key={slot.role}
                   slot={slot}
@@ -188,25 +212,33 @@ export function SubmitEdit() {
                 />
               ))}
 
-              <FormControlLabel
-                control={
-                  <Switch checked={cameraReady} onChange={(e) => setCameraReady(e.target.checked)} />
-                }
-                label="The camera-ready version changed from the accepted version"
-              />
-              {cameraReady && (
+              {!announced && (
                 <>
-                  <Alert severity="info">
-                    The files below replace the originally-submitted paper and source in the archive.
-                  </Alert>
-                  {CAMERA_READY_FILES.map((slot) => (
-                    <FileDrop
-                      key={slot.role}
-                      slot={slot}
-                      file={files[slot.role] ?? null}
-                      onPick={(f) => setFiles((p) => ({ ...p, [slot.role]: f }))}
-                    />
-                  ))}
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={cameraReady}
+                        onChange={(e) => setCameraReady(e.target.checked)}
+                      />
+                    }
+                    label="The camera-ready version changed from the accepted version"
+                  />
+                  {cameraReady && (
+                    <>
+                      <Alert severity="info">
+                        The files below replace the originally-submitted paper and source in the
+                        archive.
+                      </Alert>
+                      {CAMERA_READY_FILES.map((slot) => (
+                        <FileDrop
+                          key={slot.role}
+                          slot={slot}
+                          file={files[slot.role] ?? null}
+                          onPick={(f) => setFiles((p) => ({ ...p, [slot.role]: f }))}
+                        />
+                      ))}
+                    </>
+                  )}
                 </>
               )}
 

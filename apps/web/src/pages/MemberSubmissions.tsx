@@ -11,6 +11,7 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { useNavigate, useParams } from "react-router-dom";
 import type { Submission } from "@atrium/shared";
 import { SubmissionsTable } from "../components/SubmissionsTable";
@@ -45,19 +46,31 @@ export function MemberSubmissions() {
 
   useEffect(() => {
     if (!id) return;
+    let active = true;
     setData(null);
     setError(null);
-    fetch(`/api/members/${encodeURIComponent(id)}/submissions`, { credentials: "include" })
-      .then(async (r) => {
-        const body = (await r.json().catch(() => ({}))) as MemberSubmissionsResponse & {
-          error?: string;
-        };
-        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
-        return body;
-      })
-      .then(setData)
-      .catch((e: Error) => setError(e.message));
+    const load = () => {
+      fetch(`/api/members/${encodeURIComponent(id)}/submissions`, { credentials: "include" })
+        .then(async (r) => {
+          const body = (await r.json().catch(() => ({}))) as MemberSubmissionsResponse & {
+            error?: string;
+          };
+          if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+          return body;
+        })
+        .then((b) => active && setData(b))
+        .catch((e: Error) => active && setError(e.message));
+    };
+    load();
+    // Light polling so delivery status + the website-PR link appear without a reload.
+    const t = setInterval(load, 15000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
   }, [id]);
+
+  const hasPrerelease = (data?.items ?? []).some((s) => s.stage === "announced");
 
   return (
     <Container maxWidth="lg" sx={{ py: 3 }}>
@@ -119,12 +132,29 @@ export function MemberSubmissions() {
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 1.5 }}>
             Submissions ({data.items.length})
           </Typography>
+          {isSelf && hasPrerelease && (
+            <Alert severity="info" sx={{ mb: 1.5 }}>
+              You have a pre-release notification. Once the paper is published and you have the
+              camera-ready PDF &amp; bib, click <strong>Update submission</strong> to attach them —
+              the public-website entry updates automatically.
+            </Alert>
+          )}
           <SubmissionsTable
             items={data.items}
             renderActions={
               canSubmit
                 ? (s) =>
-                    s.kind === "paper" ? (
+                    s.stage === "announced" ? (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        startIcon={<UploadFileIcon />}
+                        onClick={() => navigate(`/submit/edit/${s.id}`)}
+                      >
+                        Update submission
+                      </Button>
+                    ) : s.kind === "paper" ? (
                       <Button
                         size="small"
                         startIcon={<EditIcon />}
