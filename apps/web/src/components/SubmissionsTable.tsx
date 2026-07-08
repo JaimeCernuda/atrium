@@ -7,6 +7,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   Typography,
@@ -62,8 +63,8 @@ function WebsiteCell({ s }: { s: Submission }) {
 export function SubmissionsTable({ items, showSubmitter = false, renderActions }: Props) {
   const columns = 6 + (showSubmitter ? 1 : 0) + (renderActions ? 1 : 0);
   return (
-    <Paper variant="outlined">
-      <Table size="small">
+    <TableContainer component={Paper} variant="outlined" sx={{ maxWidth: "100%", overflowX: "auto" }}>
+      <Table size="small" sx={{ minWidth: 720 }}>
         <TableHead>
           <TableRow>
             <TableCell>Key</TableCell>
@@ -162,6 +163,6 @@ export function SubmissionsTable({ items, showSubmitter = false, renderActions }
           ))}
         </TableBody>
       </Table>
-    </Paper>
+    </TableContainer>
   );
 }
