@@ -333,7 +333,10 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
       ...res.out,
     ];
 
-    const nextStage = initial ? (existing.kind === "paper" ? "new" : existing.stage) : "edited";
+    // A pre-release stays "announced" (metadata/PR only, no delivery) until real
+    // files are actually attached — only then does it enter the delivery pipeline.
+    const hasFiles = merged.length > 0;
+    const nextStage = initial ? (hasFiles ? "new" : "announced") : "edited";
     const row = await prisma.submission.update({
       where: { id: existing.id },
       data: {
@@ -342,7 +345,9 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
         resources,
         files: merged as unknown as Prisma.InputJsonValue,
         stage: nextStage,
-        status: "received",
+        // Only queue delivery when there's something to deliver; a still-fileless
+        // pre-release keeps its non-delivery status (the deliver cron skips it too).
+        status: hasFiles ? "received" : existing.status,
         notes: (f.notes ?? "").trim() || existing.notes,
       },
     });

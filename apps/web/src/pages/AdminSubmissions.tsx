@@ -13,13 +13,18 @@ import {
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import EditIcon from "@mui/icons-material/Edit";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+import { useNavigate } from "react-router-dom";
 import type { Submission } from "@atrium/shared";
 import { SubmissionsTable } from "../components/SubmissionsTable";
 import { can, useStore } from "../store";
 
 export function AdminSubmissions() {
+  const navigate = useNavigate();
   const me = useStore((s) => s.user);
   const canManage = can(me, "manage_submissions");
+  const canEdit = can(me, "submit");
   const [items, setItems] = useState<Submission[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<Submission | null>(null);
@@ -84,18 +89,34 @@ export function AdminSubmissions() {
         items={items}
         showSubmitter
         renderActions={
-          canManage
-            ? (s) =>
-                s.status === "cancelling" || s.status === "cancelled" ? null : (
-                  <Button
-                    size="small"
-                    color="error"
-                    startIcon={<DeleteOutlineIcon />}
-                    onClick={() => setTarget(s)}
-                  >
-                    Remove
-                  </Button>
-                )
+          canEdit || canManage
+            ? (s) => {
+                if (s.status === "cancelling" || s.status === "cancelled") return null;
+                const editable = s.kind === "paper" || s.stage === "announced";
+                return (
+                  <Stack direction="row" spacing={1} justifyContent="flex-end">
+                    {canEdit && editable && (
+                      <Button
+                        size="small"
+                        startIcon={s.stage === "announced" ? <UploadFileIcon /> : <EditIcon />}
+                        onClick={() => navigate(`/submit/edit/${s.id}`)}
+                      >
+                        {s.stage === "announced" ? "Add files" : "Edit"}
+                      </Button>
+                    )}
+                    {canManage && (
+                      <Button
+                        size="small"
+                        color="error"
+                        startIcon={<DeleteOutlineIcon />}
+                        onClick={() => setTarget(s)}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </Stack>
+                );
+              }
             : undefined
         }
       />

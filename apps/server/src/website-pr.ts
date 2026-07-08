@@ -29,6 +29,7 @@ interface WebsiteConfig {
   publicationsDir: string; // "data/publications"
   authorAliases: Record<string, string>; // "Xian-He Sun" -> "X.-H. Sun"
   typeMap: Record<string, string>; // paper pubType -> website type
+  reviewers: Record<string, string>; // submitter email (lowercase) -> GitHub login
   enabled: boolean;
 }
 
@@ -81,6 +82,7 @@ async function loadWebsiteConfig(): Promise<WebsiteConfig | null> {
     publicationsDir: raw.publicationsDir ?? "data/publications",
     authorAliases: raw.authorAliases ?? {},
     typeMap: raw.typeMap ?? {},
+    reviewers: raw.reviewers ?? {},
     enabled: raw.enabled ?? true,
   };
 }
@@ -395,6 +397,30 @@ function prBody(sub: Submission): string {
   ].join("\n");
 }
 
+// Ask the submitter to review their own publication PR, if we know their GitHub
+// login (config.reviewers: email -> login). Best-effort; never throws.
+async function requestReviewer(
+  token: string,
+  cfg: WebsiteConfig,
+  prNumber: number,
+  sub: Submission,
+): Promise<void> {
+  try {
+    const login = cfg.reviewers[(sub.submitterEmail || "").toLowerCase()];
+    if (!login) return;
+    const res = await gh(token, "POST", `/repos/${cfg.repo}/pulls/${prNumber}/requested_reviewers`, {
+      reviewers: [login],
+    });
+    // 422 = already requested / not a collaborator; not worth surfacing.
+    if (res.ok) console.log(`[website-pr] requested review from ${login} on #${prNumber}`);
+    else if (res.status !== 422) {
+      console.warn(`[website-pr] request review ${login} #${prNumber}: ${res.status} ${await safeText(res)}`);
+    }
+  } catch (e) {
+    console.warn(`[website-pr] request review failed: ${(e as Error).message}`);
+  }
+}
+
 async function createPr(token: string, cfg: WebsiteConfig, branch: string, sub: Submission): Promise<GhPr> {
   const res = await gh(token, "POST", `/repos/${cfg.repo}/pulls`, {
     title: `Publish: ${sub.title}`,
@@ -459,6 +485,7 @@ export async function syncSubmissionToWebsite(id: string): Promise<void> {
     await ensureBranch(token, cfg, branch);
     await putFile(token, cfg, branch, `${cfg.publicationsDir}/${slug}.yaml`, yaml, `Publish: ${sub.title}`);
     const pr = existingPr ?? (await createPr(token, cfg, branch, sub));
+    await requestReviewer(token, cfg, pr.number, sub); // ask the submitter to review
 
     await prisma.submission.update({
       where: { id },

@@ -45,27 +45,38 @@ export function SubmitEdit() {
   const set = (k: string) => (e: { target: { value: string } }) =>
     setFields((p) => ({ ...p, [k]: e.target.value }));
 
-  // Load the submission being edited from the user's own list.
+  // Load the submission being edited. Try the user's own list first; if it's not
+  // there (an admin editing someone else's), fall back to the admin all-list.
   useEffect(() => {
-    fetch("/api/submissions/mine", { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((d: { items: Submission[] }) => {
-        const found = d.items.find((s) => s.id === id);
-        // Only papers can go through the post-conference flow; a pre-release
-        // ("announced") submission of either kind can be completed here.
-        if (!found || (found.kind !== "paper" && found.stage !== "announced")) {
-          setNotFound(true);
-          return;
-        }
-        setSubmission(found);
-        setResources(found.resources ?? []);
-        setFields({
-          final_citation_key: found.citationKey,
-          doi: found.doi && found.doi !== "none" ? found.doi : "",
-          notes: "",
-        });
-      })
-      .catch(() => setNotFound(true));
+    let active = true;
+    const fetchList = (url: string): Promise<Submission[]> =>
+      fetch(url, { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : { items: [] }))
+        .then((d: { items?: Submission[] }) => d.items ?? [])
+        .catch(() => []);
+
+    (async () => {
+      let found = (await fetchList("/api/submissions/mine")).find((s) => s.id === id);
+      if (!found) found = (await fetchList("/api/submissions")).find((s) => s.id === id);
+      if (!active) return;
+      // Only papers can go through the post-conference flow; a pre-release
+      // ("announced") submission of either kind can be completed here.
+      if (!found || (found.kind !== "paper" && found.stage !== "announced")) {
+        setNotFound(true);
+        return;
+      }
+      setSubmission(found);
+      setResources(found.resources ?? []);
+      setFields({
+        final_citation_key: found.citationKey,
+        doi: found.doi && found.doi !== "none" ? found.doi : "",
+        notes: "",
+      });
+    })();
+
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   // Two shapes:

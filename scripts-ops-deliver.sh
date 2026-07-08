@@ -128,7 +128,7 @@ cancel_one() {
 
 main() {
   local rows cancels ip
-  rows=$(q "SELECT id, \"citationKey\", files::text FROM \"Submission\" WHERE status='received' ORDER BY \"createdAt\";")
+  rows=$(q "SELECT id, \"citationKey\", files::text FROM \"Submission\" WHERE status='received' AND jsonb_array_length(files) > 0 ORDER BY \"createdAt\";")
   cancels=$(q "SELECT id, \"citationKey\", files::text, \"purgeRequested\" FROM \"Submission\" WHERE status='cancelling' ORDER BY \"createdAt\";")
   if [ -z "$rows" ] && [ -z "$cancels" ]; then log "nothing to deliver"; exit 0; fi
   ip=$(ensure_vm_ip)
