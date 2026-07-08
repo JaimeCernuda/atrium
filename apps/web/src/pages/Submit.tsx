@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Alert,
+  AlertTitle,
   Box,
   Button,
   Chip,
@@ -32,7 +33,7 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import { useNavigate } from "react-router-dom";
-import type { FundingGrant, FundingList, SubmissionResource } from "@atrium/shared";
+import type { FundingGrant, FundingList, Submission, SubmissionResource } from "@atrium/shared";
 import { AppShell } from "../components/AppShell";
 import { FileDrop } from "../components/FileDrop";
 import { ResourcePicker } from "../components/ResourcePicker";
@@ -43,6 +44,7 @@ type Kind = "paper" | "poster";
 export function Submit() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<Kind>("paper");
+  const [prerelease, setPrerelease] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [files, setFiles] = useState<Record<string, File | null>>({});
   const [resources, setResources] = useState<SubmissionResource[]>([]);
@@ -55,6 +57,7 @@ export function Submit() {
   const [fundingOpen, setFundingOpen] = useState(false);
   const [snack, setSnack] = useState<string | null>(null);
   const [funding, setFunding] = useState<FundingList>({ active: [], completed: [] });
+  const [done, setDone] = useState<Submission | null>(null);
 
   const set = (k: string) => (e: { target: { value: string } }) =>
     setFields((p) => ({ ...p, [k]: e.target.value }));
@@ -104,15 +107,20 @@ export function Submit() {
     fd.append("github_url", ghNone ? "none" : fields.github_url ?? "");
     fd.append("notes", fields.notes ?? "");
     fd.append("confirmation", confirm ? "true" : "false");
+    fd.append("mode", prerelease ? "prerelease" : "full");
     if (kind === "paper") fd.append("type", fields.type ?? "");
     if (kind === "poster") fd.append("doi", doiNone ? "none" : fields.doi ?? "");
 
-    for (const slot of slots) {
-      const f = files[slot.role];
-      if (f) fd.append(slot.role, f, f.name);
-      else if (slot.required) {
-        setError(`Missing required file: ${slot.label}`);
-        return;
+    // Pre-release: no files yet (the inputs are disabled). Otherwise enforce the
+    // required-file set as before.
+    if (!prerelease) {
+      for (const slot of slots) {
+        const f = files[slot.role];
+        if (f) fd.append(slot.role, f, f.name);
+        else if (slot.required) {
+          setError(`Missing required file: ${slot.label}`);
+          return;
+        }
       }
     }
 
@@ -123,14 +131,46 @@ export function Submit() {
         const j = (await r.json().catch(() => ({}))) as { error?: string };
         throw new Error(j.error ?? `HTTP ${r.status}`);
       }
-      // Back to the hub — the new submission shows there with live delivery status.
-      navigate("/members/me/submissions");
+      // Show the confirmation + website-PR guidance instead of navigating away.
+      setDone((await r.json()) as Submission);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   };
+
+  if (done) {
+    return (
+      <AppShell>
+        <Container maxWidth="sm" sx={{ py: 4 }}>
+          <Alert severity="success" sx={{ mb: 2 }}>
+            <AlertTitle>
+              {prerelease ? "Pre-release notification sent" : "Submission received"}
+            </AlertTitle>
+            Your {done.kind} <strong>{done.title}</strong> was recorded.
+          </Alert>
+          <Alert severity="info" icon={false} sx={{ mb: 2 }}>
+            A pull request is being opened on the public website (grc-iit/website). In a moment it
+            appears as a linked <strong>PR</strong> chip next to this submission in{" "}
+            <strong>My submissions</strong> — open it, review the entry, and once it looks right,{" "}
+            <strong>ask an admin to merge it</strong> to publish.
+          </Alert>
+          {prerelease && (
+            <Alert severity="warning" icon={false} sx={{ mb: 2 }}>
+              You sent this as a <strong>pre-release notification</strong>, so no files were
+              attached. Once the paper is published and you have the camera-ready PDF &amp; bib, come
+              back to <strong>My submissions</strong> and click <strong>Update submission</strong> to
+              attach them — the website entry updates automatically.
+            </Alert>
+          )}
+          <Button variant="contained" onClick={() => navigate("/members/me/submissions")}>
+            Go to My submissions
+          </Button>
+        </Container>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
@@ -159,6 +199,24 @@ export function Submit() {
           <ToggleButton value="paper">Paper</ToggleButton>
           <ToggleButton value="poster">Poster</ToggleButton>
         </ToggleButtonGroup>
+
+        <Alert
+          severity={prerelease ? "warning" : "info"}
+          icon={false}
+          sx={{ mb: 2 }}
+          action={
+            <Switch
+              checked={prerelease}
+              onChange={(e) => setPrerelease(e.target.checked)}
+              inputProps={{ "aria-label": "pre-release notification" }}
+            />
+          }
+        >
+          <strong>Pre-release notification</strong> — the {kind} isn&apos;t published yet.
+          {prerelease
+            ? " File uploads are disabled; just fill in the details. You'll attach the camera-ready files later via Update submission."
+            : " Turn this on to announce an accepted-but-unpublished paper without files."}
+        </Alert>
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -301,7 +359,7 @@ export function Submit() {
 
           <Divider textAlign="left">
             <Typography variant="caption" color="text.secondary">
-              Files
+              Files{prerelease ? " — not needed for a pre-release notification" : ""}
             </Typography>
           </Divider>
           {slots.map((slot) => (
@@ -309,6 +367,7 @@ export function Submit() {
               key={slot.role}
               slot={slot}
               file={files[slot.role] ?? null}
+              disabled={prerelease}
               onPick={(f) => setFiles((p) => ({ ...p, [slot.role]: f }))}
             />
           ))}
@@ -323,11 +382,21 @@ export function Submit() {
 
           <FormControlLabel
             control={<Switch checked={confirm} onChange={(e) => setConfirm(e.target.checked)} />}
-            label="This is the accepted version and I have the right to share these files publicly. *"
+            label={
+              prerelease
+                ? "The details above are accurate. *"
+                : "This is the accepted version and I have the right to share these files publicly. *"
+            }
           />
 
           <Button variant="contained" size="large" disabled={busy} onClick={submit}>
-            {busy ? "Submitting…" : kind === "poster" ? "Submit poster" : "Submit new paper"}
+            {busy
+              ? "Submitting…"
+              : prerelease
+                ? "Send pre-release notification"
+                : kind === "poster"
+                  ? "Submit poster"
+                  : "Submit new paper"}
           </Button>
         </Stack>
 

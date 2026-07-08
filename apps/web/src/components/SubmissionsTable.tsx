@@ -32,8 +32,35 @@ interface Props {
   renderActions?: (s: Submission) => ReactNode;
 }
 
+function WebsiteCell({ s }: { s: Submission }) {
+  const url = s.unpublishPrUrl ?? s.websitePrUrl;
+  if (!url) {
+    return (
+      <Typography variant="caption" color="text.disabled">
+        —
+      </Typography>
+    );
+  }
+  const label = s.unpublishPrUrl
+    ? `unpublish #${s.websitePrNumber ?? ""}`
+    : `PR #${s.websitePrNumber ?? ""}`;
+  return (
+    <Chip
+      size="small"
+      variant="outlined"
+      color={s.unpublishPrUrl ? "warning" : "primary"}
+      clickable
+      component={Link}
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      label={`${label} ↗`}
+    />
+  );
+}
+
 export function SubmissionsTable({ items, showSubmitter = false, renderActions }: Props) {
-  const columns = 5 + (showSubmitter ? 1 : 0) + (renderActions ? 1 : 0);
+  const columns = 6 + (showSubmitter ? 1 : 0) + (renderActions ? 1 : 0);
   return (
     <Paper variant="outlined">
       <Table size="small">
@@ -45,6 +72,7 @@ export function SubmissionsTable({ items, showSubmitter = false, renderActions }
             <TableCell>Status</TableCell>
             <TableCell>Submitted</TableCell>
             <TableCell>Files</TableCell>
+            <TableCell>Website</TableCell>
             {renderActions && <TableCell align="right" />}
           </TableRow>
         </TableHead>
@@ -62,6 +90,15 @@ export function SubmissionsTable({ items, showSubmitter = false, renderActions }
                 {s.citationKey}
                 {s.stage === "edited" && (
                   <Chip size="small" label="edited" sx={{ ml: 0.5 }} variant="outlined" />
+                )}
+                {s.stage === "announced" && (
+                  <Chip
+                    size="small"
+                    color="secondary"
+                    label="pre-release"
+                    sx={{ ml: 0.5 }}
+                    variant="outlined"
+                  />
                 )}
                 <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
                   {s.title}
@@ -112,6 +149,9 @@ export function SubmissionsTable({ items, showSubmitter = false, renderActions }
                     ),
                   )}
                 </Box>
+              </TableCell>
+              <TableCell sx={{ whiteSpace: "nowrap" }}>
+                <WebsiteCell s={s} />
               </TableCell>
               {renderActions && (
                 <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>

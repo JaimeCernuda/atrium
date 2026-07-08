@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "repo": "grc-iit/website",
+  "baseBranch": "main",
+  "publicationsDir": "data/publications",
+  "authorAliases": {
+    "Xian-He Sun": "X.-H. Sun",
+    "Anthony Kougkas": "A. Kougkas"
+  },
+  "typeMap": {
+    "Conference": "Conference",
+    "Journal": "Journal",
+    "Workshop": "Workshop",
+    "Preprint": "WIP"
+  }
+}

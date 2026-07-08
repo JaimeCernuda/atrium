@@ -38,6 +38,7 @@ const PERMISSION_LABELS: Record<string, string> = {
   manage_bots: "Manage bots",
   view_metrics: "View metrics",
   view_all_submissions: "View all submissions",
+  manage_submissions: "Cancel/delete submissions",
   submit: "Submit papers",
   create_reminders: "Create reminders",
   write_digest: "Manage digests",

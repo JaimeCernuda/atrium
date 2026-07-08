@@ -147,10 +147,18 @@ model Submission {
   submitterName  String
   submitterEmail String
   files          Json      @default("[]") // [{role, filename, publicUrl}]
-  stage          String    @default("new") // paper: new -> edited
-  status         String    @default("received") // received|delivering|delivered|failed
+  stage          String    @default("new") // announced (pre-release) | new | edited
+  status         String    @default("received") // received|delivering|delivered|failed|cancelling|cancelled
   deliveryLog    String?
   deliveredAt    DateTime?
+  // Public-website publishing (grc-iit/website): the auto-generated publication PR.
+  websiteSlug        String?  // data/publications/<slug>.yaml — stable once assigned
+  websitePrUrl       String?
+  websitePrNumber    Int?
+  websiteContentHash String?  // sha256 of the last YAML pushed; drives idempotent sync
+  websiteSyncedAt    DateTime?
+  unpublishPrUrl     String?  // set when a merged entry is withdrawn (cancel/delete)
+  purgeRequested     Boolean  @default(false) // status=cancelling + this => host deletes the row after remote cleanup
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 

@@ -1,4 +1,4 @@
-import { mkdir, writeFile, rename, readFile } from "node:fs/promises";
+import { mkdir, writeFile, rename, readFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -13,6 +13,7 @@ import { prisma } from "./db.js";
 import type { Config } from "./config.js";
 import { requireUser } from "./auth.js";
 import { requirePermission } from "./permissions.js";
+import { syncSubmissionToWebsite, revertSubmissionOnWebsite } from "./website-pr.js";
 
 const PAPERS_DIR = resolve(process.env.PAPERS_DIR ?? "/data/papers");
 const KEY_RE = /^[A-Za-z][A-Za-z0-9_:+-]*$/;
@@ -114,7 +115,10 @@ export function toApi(row: {
   githubUrl: string;
   doi: string | null; abstract: string; notes: string | null; submitterName: string;
   submitterEmail: string; files: unknown; stage: string; status: string;
-  deliveryLog: string | null; deliveredAt: Date | null; createdAt: Date; updatedAt: Date;
+  deliveryLog: string | null; deliveredAt: Date | null;
+  websiteSlug: string | null; websitePrUrl: string | null; websitePrNumber: number | null;
+  unpublishPrUrl: string | null;
+  createdAt: Date; updatedAt: Date;
 }): Submission {
   return {
     id: row.id,
@@ -138,6 +142,10 @@ export function toApi(row: {
     status: row.status as Submission["status"],
     deliveryLog: row.deliveryLog,
     deliveredAt: row.deliveredAt?.toISOString() ?? null,
+    websiteSlug: row.websiteSlug,
+    websitePrUrl: row.websitePrUrl,
+    websitePrNumber: row.websitePrNumber,
+    unpublishPrUrl: row.unpublishPrUrl,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -234,8 +242,16 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
       return bad(reply, `a submission with key "${key}" already exists`);
     }
 
+    // Pre-release notification: the paper isn't published yet, so no files exist.
+    // Every file role becomes optional and the record starts in the "announced"
+    // stage. The member later attaches the camera-ready files via /edit.
+    const prerelease = f.mode === "prerelease";
     const specs = kind === "paper" ? PAPER_NEW : POSTER;
-    const optional = kind === "poster" ? new Set(["abstract"]) : new Set<string>();
+    const optional = prerelease
+      ? new Set(specs.map((s) => s.role))
+      : kind === "poster"
+        ? new Set(["abstract"])
+        : new Set<string>();
     const res = await ingestFiles(key, specs, parsed.files, optional);
     if (!res.ok) return bad(reply, res.msg);
 
@@ -246,9 +262,12 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
         githubUrl: (f.github_url ?? "").trim(), doi, abstract: (f.abstract ?? "").trim(),
         notes: (f.notes ?? "").trim() || null,
         submitterId: user.id, submitterName: user.name, submitterEmail: user.email,
-        files: res.out as unknown as Prisma.InputJsonValue, stage: "new", status: "received",
+        files: res.out as unknown as Prisma.InputJsonValue,
+        stage: prerelease ? "announced" : "new",
+        status: "received",
       },
     });
+    void syncSubmissionToWebsite(row.id); // fire-and-forget; inert if unconfigured
     return reply.send(toApi(row));
   });
 
@@ -268,14 +287,26 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     const doi = (f.doi ?? "").trim();
     if (!KEY_RE.test(origKey)) return bad(reply, "invalid original_citation_key");
     if (!KEY_RE.test(finalKey)) return bad(reply, "invalid final_citation_key");
-    if (!doi) return bad(reply, "doi required");
     const resources = parseResources(f.resources);
     if (resources === null) return bad(reply, "invalid resource tag");
 
-    const existing = await prisma.submission.findFirst({ where: { citationKey: origKey, kind: "paper" } });
-    if (!existing) return bad(reply, `no matching paper submission for key "${origKey}"`);
+    const existing = await prisma.submission.findFirst({ where: { citationKey: origKey } });
+    if (!existing) return bad(reply, `no matching submission for key "${origKey}"`);
 
-    // If key changed, rename already-delivered Package 1 files in the archive.
+    // Two update shapes, distinguished by the record's current stage:
+    //  - "announced" (pre-release) -> now attaching the published files for the
+    //    first time. File slots are the kind's normal set, all optional (attach
+    //    what you have), DOI optional. Paper advances announced -> new.
+    //  - "new"/"edited" paper -> the post-conference package (updated citations
+    //    with DOI + slides). DOI required, as before.
+    const initial = existing.stage === "announced";
+    if (!initial && !doi) return bad(reply, "doi required");
+    const specs = initial ? (existing.kind === "paper" ? PAPER_NEW : POSTER) : PAPER_EDIT;
+    const optionalRoles = initial
+      ? new Set(specs.map((s) => s.role))
+      : new Set(["pdf", "source"]);
+
+    // If key changed, rename already-delivered files in the archive.
     const oldDir = join(PAPERS_DIR, origKey);
     const newDir = join(PAPERS_DIR, finalKey);
     let priorFiles = (existing.files as unknown as SubmissionFile[]) ?? [];
@@ -292,9 +323,7 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
       priorFiles = renamed;
     }
 
-    // Package 2 files: bib + cite (with DOI) replace P1's; slides added.
-    // Camera-ready paper/source are optional and replace the originals when provided.
-    const res = await ingestFiles(finalKey, PAPER_EDIT, parsed.files, new Set(["pdf", "source"]));
+    const res = await ingestFiles(finalKey, specs, parsed.files, optionalRoles);
     if (!res.ok) return bad(reply, res.msg);
 
     // Merge file list: any role re-uploaded in this package replaces the prior file.
@@ -304,13 +333,20 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
       ...res.out,
     ];
 
+    const nextStage = initial ? (existing.kind === "paper" ? "new" : existing.stage) : "edited";
     const row = await prisma.submission.update({
       where: { id: existing.id },
       data: {
-        citationKey: finalKey, doi, resources, files: merged as unknown as Prisma.InputJsonValue, stage: "edited", status: "received",
+        citationKey: finalKey,
+        doi: doi || existing.doi,
+        resources,
+        files: merged as unknown as Prisma.InputJsonValue,
+        stage: nextStage,
+        status: "received",
         notes: (f.notes ?? "").trim() || existing.notes,
       },
     });
+    void syncSubmissionToWebsite(row.id); // reflect the new files/DOI on the site
     return reply.send(toApi(row));
   });
 
@@ -332,4 +368,52 @@ export async function registerSubmissions(app: FastifyInstance, config: Config):
     const rows = await prisma.submission.findMany({ orderBy: { createdAt: "desc" } });
     return reply.send({ items: rows.map(toApi) });
   });
+
+  // ---- admin: cancel / delete a submission ----
+  // Removes the footprint everywhere: local archive (now), the website PR/entry
+  // (now, via the GitHub App), and the babbage-hosted files. The server cannot
+  // reach babbage (delivery is host-side), so remote removal is delegated to the
+  // deliver cron: rows are parked in status "cancelling" and the script rm's the
+  // remote files, then either flips to "cancelled" (cancel) or deletes the row
+  // (delete, purgeRequested=true). Submissions that never delivered anything have
+  // no remote files, so they finish immediately here.
+  app.delete<{ Params: { id: string }; Querystring: { mode?: string } }>(
+    "/api/submissions/:id",
+    async (req, reply) => {
+      const user = await requirePermission(req, reply, "manage_submissions", config.session.cookieName);
+      if (!user) return;
+      const existing = await prisma.submission.findUnique({ where: { id: req.params.id } });
+      if (!existing) return reply.code(404).send({ error: "not_found" });
+      const purge = req.query.mode === "delete";
+
+      // Withdraw from the website (close open PR, or open an unpublish PR).
+      await revertSubmissionOnWebsite(existing.id);
+
+      // Delete the local archive directory immediately.
+      await rm(join(PAPERS_DIR, existing.citationKey), { recursive: true, force: true }).catch(() => {});
+
+      const files = (existing.files as unknown as SubmissionFile[]) ?? [];
+      const hasRemote = files.some((f) => f.publicUrl);
+
+      if (!hasRemote) {
+        // Nothing on babbage to clean up — finish now.
+        if (purge) {
+          await prisma.submission.delete({ where: { id: existing.id } });
+          return reply.send({ ok: true, purged: true });
+        }
+        const row = await prisma.submission.update({
+          where: { id: existing.id },
+          data: { status: "cancelled" },
+        });
+        return reply.send({ ok: true, submission: toApi(row) });
+      }
+
+      // Remote files exist: hand off to the deliver script's cancellation pass.
+      const row = await prisma.submission.update({
+        where: { id: existing.id },
+        data: { status: "cancelling", purgeRequested: purge },
+      });
+      return reply.send({ ok: true, submission: toApi(row), pendingRemoteCleanup: true });
+    },
+  );
 }

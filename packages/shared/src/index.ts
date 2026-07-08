@@ -61,6 +61,7 @@ export type PermissionKey =
   | "manage_bots"
   | "view_metrics"
   | "view_all_submissions"
+  | "manage_submissions"
   | "submit"
   | "create_reminders"
   | "write_digest"
@@ -191,7 +192,13 @@ export interface FundingList {
 }
 
 export type SubmissionKind = "paper" | "poster";
-export type SubmissionStatus = "received" | "delivering" | "delivered" | "failed";
+export type SubmissionStatus =
+  | "received"
+  | "delivering"
+  | "delivered"
+  | "failed"
+  | "cancelling"
+  | "cancelled";
 
 /**
  * NSF cyberinfrastructure testbeds the lab uses. Tagged per submission so we can
@@ -225,10 +232,16 @@ export interface Submission {
   submitterName: string;
   submitterEmail: string;
   files: SubmissionFile[];
-  stage: string;
+  stage: string; // "announced" (pre-release, no files yet) | "new" | "edited"
   status: SubmissionStatus;
   deliveryLog: string | null;
   deliveredAt: string | null;
+  // Public-website publishing (grc-iit/website). Populated once Atrium opens the
+  // auto-generated publication PR; null until then (or if the integration is off).
+  websiteSlug: string | null;
+  websitePrUrl: string | null;
+  websitePrNumber: number | null;
+  unpublishPrUrl: string | null; // set when a merged entry is withdrawn
   createdAt: string;
   updatedAt: string;
 }

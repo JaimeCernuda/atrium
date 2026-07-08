@@ -37,6 +37,7 @@ const DEFAULT_ROLES: Array<{
       "manage_members",
       "view_metrics",
       "view_all_submissions",
+      "manage_submissions",
       "write_digest",
       "submit",
       "create_reminders",
@@ -69,6 +70,24 @@ export async function seedRolesIfEmpty(): Promise<void> {
   });
   invalidateRoleCache();
   console.log(`[seed] inserted ${DEFAULT_ROLES.length} default roles`);
+}
+
+/**
+ * The owner role is the superuser and must hold every permission key. When new
+ * keys are added to PERMISSION_KEYS, existing deployments (whose owner row was
+ * seeded with the older list) would otherwise lack them — including the new key
+ * needed to reach its own toggle in the roles UI. Runs on every boot; a no-op
+ * once the owner already has them all.
+ */
+export async function ensureOwnerPermissions(): Promise<void> {
+  const owner = await prisma.role.findUnique({ where: { id: "owner" } });
+  if (!owner) return;
+  const full = [...PERMISSION_KEYS];
+  const missing = full.filter((p) => !owner.permissions.includes(p));
+  if (missing.length === 0) return;
+  await prisma.role.update({ where: { id: "owner" }, data: { permissions: full } });
+  invalidateRoleCache();
+  console.log(`[roles] granted owner missing permissions: ${missing.join(", ")}`);
 }
 
 function toApi(

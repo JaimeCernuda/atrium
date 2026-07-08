@@ -102,20 +102,53 @@ deliver_one() {
   log "OK $key -> $BABBAGE_DIR"
 }
 
+# Withdraw a cancelled submission: rm its files on babbage, then either delete
+# the DB row (purgeRequested) or mark it 'cancelled'. Local files were already
+# removed and the website PR reverted by the server; this is the remote half.
+cancel_one() {
+  local id="$1" key="$2" files_json="$3" purge="$4"
+  local names rmcmd="" fn esc
+  names=$(printf '%s' "$files_json" | jq -r '.[].filename' 2>/dev/null)
+  while IFS= read -r fn; do
+    [ -z "$fn" ] && continue
+    esc=$(printf '%s' "$fn" | sed "s/'/'\\\\''/g")
+    rmcmd+="rm -f '$BABBAGE_DIR/$esc'; "
+  done <<< "$names"
+  if [ -n "$rmcmd" ]; then
+    sshpass -p "$SCS_PASS" ssh -F "$SSH_CFG" babbage-relay "$rmcmd" 2>&1 | while read -r l; do log "rm: $l"; done || true
+  fi
+  if [ "$purge" = "t" ]; then
+    x "DELETE FROM \"Submission\" WHERE id='$id';"
+    log "PURGED $key (remote files removed)"
+  else
+    x "UPDATE \"Submission\" SET status='cancelled' WHERE id='$id';"
+    log "CANCELLED $key (remote files removed)"
+  fi
+}
+
 main() {
-  local rows ip
+  local rows cancels ip
   rows=$(q "SELECT id, \"citationKey\", files::text FROM \"Submission\" WHERE status='received' ORDER BY \"createdAt\";")
-  if [ -z "$rows" ]; then log "nothing to deliver"; exit 0; fi
+  cancels=$(q "SELECT id, \"citationKey\", files::text, \"purgeRequested\" FROM \"Submission\" WHERE status='cancelling' ORDER BY \"createdAt\";")
+  if [ -z "$rows" ] && [ -z "$cancels" ]; then log "nothing to deliver"; exit 0; fi
   ip=$(ensure_vm_ip)
   if [ -z "$ip" ]; then log "VM IP not found"; exit 1; fi
   log "VM at $ip"
   if ! ensure_vpn "$ip"; then log "VPN not connected; aborting"; exit 1; fi
   write_ssh_cfg "$ip"
-  while IFS=$'\t' read -r id key files; do
-    [ -z "$id" ] && continue
-    x "UPDATE \"Submission\" SET status='delivering' WHERE id='$id';"
-    deliver_one "$id" "$key" "$files"
-  done <<< "$rows"
+  if [ -n "$rows" ]; then
+    while IFS=$'\t' read -r id key files; do
+      [ -z "$id" ] && continue
+      x "UPDATE \"Submission\" SET status='delivering' WHERE id='$id';"
+      deliver_one "$id" "$key" "$files"
+    done <<< "$rows"
+  fi
+  if [ -n "$cancels" ]; then
+    while IFS=$'\t' read -r id key files purge; do
+      [ -z "$id" ] && continue
+      cancel_one "$id" "$key" "$files" "$purge"
+    done <<< "$cancels"
+  fi
   rm -f "$SSH_CFG"
 }
 main "$@"

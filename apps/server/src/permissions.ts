@@ -16,6 +16,7 @@ export const PERMISSION_KEYS: readonly PermissionKey[] = [
   "manage_bots",
   "view_metrics",
   "view_all_submissions",
+  "manage_submissions",
   "submit",
   "create_reminders",
   "write_digest",

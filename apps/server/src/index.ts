@@ -19,8 +19,9 @@ import { registerDigest } from "./digest.js";
 import { registerReminders } from "./reminders.js";
 import { registerBotTokens } from "./bot-tokens.js";
 import { registerSubmissions } from "./submissions.js";
-import { registerRoles, seedRolesIfEmpty } from "./roles.js";
+import { registerRoles, seedRolesIfEmpty, ensureOwnerPermissions } from "./roles.js";
 import { registerMembers } from "./members.js";
+import { startWebsiteReconcileLoop } from "./website-pr.js";
 import { registerZulipLink } from "./zulip-link.js";
 import { processLevelZulipCache } from "./zulip-process-cache.js";
 
@@ -75,7 +76,9 @@ await registerMembers(app, config);
 await registerZulipLink(app, config);
 await seedRoomsIfEmpty(config.rooms);
 await seedRolesIfEmpty();
+await ensureOwnerPermissions();
 await closeOrphanedSessions();
+startWebsiteReconcileLoop();
 
 app.get("/healthz", async () => ({ ok: true }));
 

@@ -19,23 +19,39 @@ export function FileDrop({
   slot,
   file,
   onPick,
+  disabled = false,
 }: {
   slot: FileSlot;
   file: File | null;
   onPick: (f: File | null) => void;
+  /** Greyed out and non-interactive (e.g. pre-release mode: no files yet). */
+  disabled?: boolean;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   return (
     <Paper
       variant="outlined"
-      sx={{ p: 1.5, display: "flex", alignItems: "center", gap: 1.5, mb: 1 }}
+      sx={{
+        p: 1.5,
+        display: "flex",
+        alignItems: "center",
+        gap: 1.5,
+        mb: 1,
+        opacity: disabled ? 0.5 : 1,
+        pointerEvents: disabled ? "none" : "auto",
+      }}
+      aria-disabled={disabled}
     >
       <UploadFileIcon color={file ? "success" : "action"} />
       <Box sx={{ flexGrow: 1, minWidth: 0 }}>
         <Typography variant="body2" sx={{ fontWeight: 500 }}>
           {slot.label}{" "}
-          {slot.required ? (
+          {disabled ? (
+            <Box component="span" sx={{ color: "text.disabled" }}>
+              — not needed yet
+            </Box>
+          ) : slot.required ? (
             <Box component="span" sx={{ color: "error.main" }}>
               *
             </Box>
@@ -56,13 +72,14 @@ export function FileDrop({
           {file ? file.name : `${slot.accept} only`}
         </Typography>
       </Box>
-      <Button size="small" onClick={() => ref.current?.click()}>
+      <Button size="small" disabled={disabled} onClick={() => ref.current?.click()}>
         {file ? "Change" : "Browse"}
       </Button>
       <input
         ref={ref}
         type="file"
         accept={slot.accept}
+        disabled={disabled}
         style={{ display: "none" }}
         onChange={(e) => {
           onPick(e.target.files?.[0] ?? null);
