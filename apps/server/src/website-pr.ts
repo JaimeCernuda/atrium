@@ -52,8 +52,17 @@ function appCreds(): AppCreds | null {
   return { appId, privateKey, installationId };
 }
 
+/**
+ * Simpler alternative to the GitHub App: a personal access token (repo scope).
+ * PRs are authored by the token's owner. Takes precedence over the App creds
+ * when set. Set WEBSITE_GITHUB_TOKEN in .env (e.g. from `gh auth token`).
+ */
+function personalToken(): string | null {
+  return process.env.WEBSITE_GITHUB_TOKEN || null;
+}
+
 export function websiteIntegrationConfigured(): boolean {
-  return appCreds() !== null;
+  return personalToken() !== null || appCreds() !== null;
 }
 
 async function loadWebsiteConfig(): Promise<WebsiteConfig | null> {
@@ -94,6 +103,10 @@ function appJwt(creds: AppCreds): string {
 let tokenCache: { token: string; expMs: number } | null = null;
 
 async function installationToken(): Promise<string | null> {
+  // A personal access token (WEBSITE_GITHUB_TOKEN) is used directly if present —
+  // no JWT/installation dance. PRs are then authored by the token's owner.
+  const pat = personalToken();
+  if (pat) return pat;
   const creds = appCreds();
   if (!creds) return null;
   if (tokenCache && tokenCache.expMs - 60_000 > Date.now()) return tokenCache.token;
