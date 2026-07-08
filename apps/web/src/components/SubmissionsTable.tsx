@@ -122,11 +122,26 @@ export function SubmissionsTable({ items, showSubmitter = false, renderActions }
                 </TableCell>
               )}
               <TableCell>
-                <Chip size="small" color={statusColor(s.status)} label={s.status} />
-                {s.status === "failed" && s.deliveryLog && (
-                  <Typography variant="caption" color="error" sx={{ display: "block", maxWidth: 260 }}>
-                    {s.deliveryLog}
-                  </Typography>
+                {s.stage === "announced" ? (
+                  // Pre-release: no files to deliver — success is the PR being open.
+                  s.websitePrUrl ? (
+                    <Chip size="small" color="info" variant="outlined" label="PR open — review & request merge" />
+                  ) : (
+                    <Chip size="small" label="opening PR…" />
+                  )
+                ) : (
+                  <>
+                    <Chip size="small" color={statusColor(s.status)} label={s.status} />
+                    {s.status === "failed" && s.deliveryLog && (
+                      <Typography
+                        variant="caption"
+                        color="error"
+                        sx={{ display: "block", maxWidth: 260 }}
+                      >
+                        {s.deliveryLog}
+                      </Typography>
+                    )}
+                  </>
                 )}
               </TableCell>
               <TableCell sx={{ whiteSpace: "nowrap" }}>{when(s.createdAt)}</TableCell>

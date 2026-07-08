@@ -12,5 +12,9 @@
     "Journal": "Journal",
     "Workshop": "Workshop",
     "Preprint": "WIP"
+  },
+  "reviewers": {
+    "_comment": "Map submitter email (lowercase) -> GitHub login to request their review on the PR. Read live; add entries anytime.",
+    "hxu40@hawk.illinoistech.edu": ""
   }
 }
